@@ -54,6 +54,12 @@ def get_setting(key, is_json=False):
     if row: return json.loads(row[0]) if is_json else row[0]
     return {} if is_json else ""
 
+def save_setting(key, value, is_json=False):
+    conn = sqlite3.connect(DB_NAME); c = conn.cursor()
+    val_str = json.dumps(value) if is_json else value
+    c.execute("UPDATE settings SET value=? WHERE key=?", (val_str, key))
+    conn.commit(); conn.close()
+
 def get_next_qno():
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     c.execute("SELECT MAX(id) FROM quotations")
@@ -187,7 +193,7 @@ with tab1:
             st.rerun()
 
 # ==============================
-# TAB 2: HISTORY (NOW WITH DELETE OPTION)
+# TAB 2: HISTORY (WITH DELETE)
 # ==============================
 with tab2:
     st.markdown("### Search & Manage Party History")
@@ -203,34 +209,102 @@ with tab2:
     
     if records:
         for rec in records:
-            # Layout mate column banavya (Lakhvanu dabi baju, Delete button jamni baju)
             h_col1, h_col2 = st.columns([4, 1])
-            
             with h_col1:
                 st.write(f"**Date:** {rec[1]} | **Q.No:** {rec[2]} | **Party:** {rec[3]} | **Size:** {rec[4]} | **Price:** Rs.{rec[5]}")
-            
             with h_col2:
-                # Darek record ni baju ma Delete button
                 if st.button("❌ Delete", key=f"del_{rec[0]}"):
                     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
                     c.execute("DELETE FROM quotations WHERE id=?", (rec[0],))
                     conn.commit(); conn.close()
-                    st.success("Record Delete Thai Gayo!")
-                    st.rerun() # App refresh thase etle record gayab thai jase
+                    st.success("Record Deleted!")
+                    st.rerun()
             st.divider()
     else:
         st.write("Koi record nathi.")
 
 # ==============================
-# TAB 3: MASTER SETTINGS
+# TAB 3: LIVE MASTER SETTINGS
 # ==============================
 with tab3:
     pwd = get_setting('password')
     entered_pwd = st.text_input("Enter Master Password:", type="password")
     
     if entered_pwd == pwd:
-        st.success("Access Granted!")
-        st.write("Navi Size ke Bhav badalva mate atyare PC/Mobile Pydroid app no upyog karo. Database sync thase.")
+        st.success("🔓 Access Granted!")
+        
+        p_data = get_setting('base_prices', True)
+        a_data = get_setting('addons', True)
+        
+        # --- SECTION 1: MACHINE SIZES ---
+        st.markdown("### 1️⃣ Machine Sizes & Prices")
+        with st.expander("Manage Sizes (Click to expand)", expanded=True):
+            st.write("**Current Sizes & Prices:**", p_data)
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Add / Edit Size**")
+                w_new = st.text_input("Width (W)", placeholder="e.g. 24")
+                l_new = st.text_input("Length (L)", placeholder="e.g. 48")
+                p_new = st.number_input("Price (Rs)", min_value=0, step=1000)
+                if st.button("💾 Save Size"):
+                    if w_new and l_new and p_new > 0:
+                        p_data[f"{w_new}x{l_new}"] = p_new
+                        save_setting('base_prices', p_data, True)
+                        st.success(f"{w_new}x{l_new} saved!")
+                        st.rerun()
+            with c2:
+                st.markdown("**Delete Size**")
+                sz_del = st.selectbox("Select Size to Delete", options=["--Select--"] + list(p_data.keys()))
+                if st.button("❌ Delete Size"):
+                    if sz_del != "--Select--" and sz_del in p_data:
+                        del p_data[sz_del]
+                        save_setting('base_prices', p_data, True)
+                        st.success(f"{sz_del} Deleted!")
+                        st.rerun()
+                        
+        st.divider()
+        
+        # --- SECTION 2: ADD-ONS ---
+        st.markdown("### 2️⃣ Add-ons & Extra Features")
+        with st.expander("Manage Add-ons (Click to expand)", expanded=False):
+            st.write("**Current Add-ons:**", a_data)
+            
+            c3, c4 = st.columns(2)
+            with c3:
+                st.markdown("**Add / Edit Add-on**")
+                add_name = st.text_input("Add-on Name", placeholder="e.g. Extra Motor")
+                add_price = st.number_input("Add-on Price (Rs)", min_value=0, step=500)
+                if st.button("💾 Save Add-on"):
+                    if add_name and add_price >= 0:
+                        a_data[add_name] = add_price
+                        save_setting('addons', a_data, True)
+                        st.success(f"{add_name} saved!")
+                        st.rerun()
+            with c4:
+                st.markdown("**Delete Add-on**")
+                del_opts = [k for k in a_data.keys() if k not in ["LowHighExtra", "PressureSwitch"]]
+                add_del = st.selectbox("Select Add-on to Delete", options=["--Select--"] + del_opts)
+                if st.button("❌ Delete Add-on"):
+                    if add_del != "--Select--" and add_del in a_data:
+                        del a_data[add_del]
+                        save_setting('addons', a_data, True)
+                        st.success(f"{add_del} Deleted!")
+                        st.rerun()
+                        
+        st.divider()
+        
+        # --- SECTION 3: SECURITY & T&C ---
+        st.markdown("### 3️⃣ Security & T&C")
+        with st.expander("Security Settings (Click to expand)", expanded=False):
+            new_pwd = st.text_input("New Password", value=pwd)
+            new_tc = st.text_area("Terms & Conditions", value=get_setting('tc'))
+            if st.button("💾 Save Security Settings"):
+                if new_pwd: save_setting('password', new_pwd)
+                if new_tc: save_setting('tc', new_tc)
+                st.success("Settings Saved!")
+                st.rerun()
+                
     elif entered_pwd:
         st.error("Wrong Password!")
 
