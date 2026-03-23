@@ -187,23 +187,36 @@ with tab1:
             st.rerun()
 
 # ==============================
-# TAB 2: HISTORY
+# TAB 2: HISTORY (NOW WITH DELETE OPTION)
 # ==============================
 with tab2:
-    st.markdown("### Search Party History")
+    st.markdown("### Search & Manage Party History")
     search_term = st.text_input("Enter Party Name to Search:")
     
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     if search_term:
         c.execute("SELECT id, date, q_no, party, size, total FROM quotations WHERE party LIKE ? ORDER BY id DESC", (f"%{search_term}%",))
     else:
-        c.execute("SELECT id, date, q_no, party, size, total FROM quotations ORDER BY id DESC LIMIT 20")
+        c.execute("SELECT id, date, q_no, party, size, total FROM quotations ORDER BY id DESC LIMIT 50")
     records = c.fetchall()
     conn.close()
     
     if records:
         for rec in records:
-            st.write(f"**Date:** {rec[1]} | **Q.No:** {rec[2]} | **Party:** {rec[3]} | **Size:** {rec[4]} | **Price:** Rs.{rec[5]}")
+            # Layout mate column banavya (Lakhvanu dabi baju, Delete button jamni baju)
+            h_col1, h_col2 = st.columns([4, 1])
+            
+            with h_col1:
+                st.write(f"**Date:** {rec[1]} | **Q.No:** {rec[2]} | **Party:** {rec[3]} | **Size:** {rec[4]} | **Price:** Rs.{rec[5]}")
+            
+            with h_col2:
+                # Darek record ni baju ma Delete button
+                if st.button("❌ Delete", key=f"del_{rec[0]}"):
+                    conn = sqlite3.connect(DB_NAME); c = conn.cursor()
+                    c.execute("DELETE FROM quotations WHERE id=?", (rec[0],))
+                    conn.commit(); conn.close()
+                    st.success("Record Delete Thai Gayo!")
+                    st.rerun() # App refresh thase etle record gayab thai jase
             st.divider()
     else:
         st.write("Koi record nathi.")
@@ -217,8 +230,7 @@ with tab3:
     
     if entered_pwd == pwd:
         st.success("Access Granted!")
-        st.write("Navi Size ke Bhav badalva mate atyare PC/Mobile app no upyog karo. Database sync thase.")
-        # Ahia advance settings aavi shake, pan mobile app (Pydroid) mathi manage karvu vadhu saral che.
+        st.write("Navi Size ke Bhav badalva mate atyare PC/Mobile Pydroid app no upyog karo. Database sync thase.")
     elif entered_pwd:
         st.error("Wrong Password!")
 
