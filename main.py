@@ -54,6 +54,19 @@ def get_sheet():
     client = gspread.authorize(creds)
     return client.open("Surgicraft_Database").sheet1
 
+# Fetch data early for Auto-suggest
+try:
+    sheet = get_sheet()
+    all_sheet_data = sheet.get_all_records()
+    main_df = pd.DataFrame(all_sheet_data) if all_sheet_data else pd.DataFrame()
+    
+    unique_parties_list = sorted(main_df['Party'].astype(str).str.strip().str.title().unique().tolist()) if not main_df.empty else []
+    unique_parts_list = sorted(main_df[main_df['Speed'] == 'Spare Part']['Size'].astype(str).str.strip().unique().tolist()) if not main_df.empty else []
+    all_items_list = sorted(main_df['Size'].astype(str).str.strip().unique().tolist()) if not main_df.empty else []
+except Exception as e:
+    st.error(f"Google Sheet Connection Error! Error: {e}")
+    st.stop()
+
 # --- HELPER FORMAT FUNCTION ---
 def format_size(size_str):
     if "x" in size_str:
@@ -214,8 +227,8 @@ def create_part_search_pdf(party_name, part_name, df):
     c.drawString(40, 800, "Item / Part Price Search Report")
     
     c.setFont("Helvetica", 11)
-    c.drawString(40, 780, f"Party: {party_name if party_name else 'All Parties'}")
-    c.drawString(40, 765, f"Item/Part: {part_name if part_name else 'All Items'}")
+    c.drawString(40, 780, f"Party: {party_name if party_name and party_name != '-- All Parties --' else 'All Parties'}")
+    c.drawString(40, 765, f"Item/Part: {part_name if part_name and part_name != '-- All Items --' else 'All Items'}")
     c.drawString(400, 780, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
     y = 730
@@ -254,20 +267,21 @@ def create_part_search_pdf(party_name, part_name, df):
 
 # --- SIDEBAR MENU ---
 st.sidebar.title("🏥 Surgicraft Menu")
-# NAVU MENU OPTION ADD KARYU CHE:
-menu = st.sidebar.radio("Go to:", ["➕ New Quotation / Bill", "📜 Party History & Search", "🔍 Part Price Finder", "⚙️ Master Settings"])
-
-try: sheet = get_sheet()
-except Exception as e:
-    st.error(f"Google Sheet Connection Error! Error: {e}")
-    st.stop()
+menu = st.sidebar.radio("Go to:", ["➕ New Quotation / Bill", "📜 Party History & Edit", "🔍 Part Price Finder", "⚙️ Master Settings"])
 
 # ==========================================
 # 1. CREATE QUOTATION PAGE
 # ==========================================
 if menu == "➕ New Quotation / Bill":
     st.title("Surgicraft Billing & Quotation") 
-    party_name = st.text_input("Party Name:", placeholder="Enter customer name...")
+    
+    # Auto-Suggest for Party
+    party_sel = st.selectbox("Select Party (Type to search):", ["-- New Party --"] + unique_parties_list)
+    if party_sel == "-- New Party --":
+        party_name = st.text_input("Enter New Party Name:")
+    else:
+        party_name = party_sel
+        
     st.write("---")
     
     entry_type = st.radio("What do you want to add?", ["Machine", "Spare Part / Custom Item"], horizontal=True)
@@ -318,7 +332,7 @@ if menu == "➕ New Quotation / Bill":
             st.success(f"**Calculated Machine Price: Rs. {final_total_price:,.2f}/-**")
 
             if st.button("➕ ADD MACHINE TO BILL", type="primary"):
-                if not party_name: st.warning("Please enter Party Name first!")
+                if not party_name: st.warning("Please enter/select Party Name first!")
                 else:
                     st.session_state.cart.append({
                         "party": party_name, "size": size, "base_price": base_machine_price,
@@ -331,8 +345,17 @@ if menu == "➕ New Quotation / Bill":
     else:
         st.write("### Add Spare Part Details")
         c1, c2 = st.columns(2)
-        part_name = c1.text_input("Part Name / Description (e.g., Heater Coil, Motor Repair)")
-        part_price = c2.number_input("Final Price (Rs)", min_value=0, step=100)
+        
+        # Auto-suggest for Spare Parts
+        with c1:
+            part_sel = st.selectbox("Select Part (Type to search):", ["-- New Part --"] + unique_parts_list)
+            if part_sel == "-- New Part --":
+                part_name = st.text_input("Enter New Part Name / Description:")
+            else:
+                part_name = part_sel
+                
+        with c2:
+            part_price = st.number_input("Final Price (Rs)", min_value=0, step=100)
         
         if st.button("➕ ADD PART TO BILL", type="primary"):
             if not party_name: st.warning("Please enter Party Name first!")
@@ -373,15 +396,14 @@ if menu == "➕ New Quotation / Bill":
                 st.session_state.cart = []; st.session_state.q_no = f"SUR/{datetime.now().year}/{datetime.now().strftime('%m%d%H%M')}"; st.rerun()
 
 # ==========================================
-# 2. PARTY HISTORY PAGE 
+# 2. PARTY HISTORY & EDIT PAGE 
 # ==========================================
-elif menu == "📜 Party History & Search":
-    st.title("Party Search History")
+elif menu == "📜 Party History & Edit":
+    st.title("Party History, Edit & Search")
     
-    data = sheet.get_all_records()
-    if not data: st.info("No records found in Google Sheet.")
+    if main_df.empty: st.info("No records found in Google Sheet.")
     else:
-        df = pd.DataFrame(data)
+        df = main_df.copy()
         df['Clean_Party'] = df['Party'].astype(str).str.strip().str.title()
         df['DateObj'] = pd.to_datetime(df['Date'], format="%d-%m-%Y", errors='coerce')
         df['Year'] = df['DateObj'].dt.year
@@ -399,12 +421,12 @@ elif menu == "📜 Party History & Search":
         st.dataframe(filtered_df.drop(columns=['Clean_Party', 'DateObj', 'Year', 'MonthNum'], errors='ignore'), use_container_width=True)
         st.write("---")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         unique_parties = sorted(df['Clean_Party'].unique().tolist())
         unique_qnos = sorted(df['Q_No'].astype(str).unique().tolist(), reverse=True)
         
         with col1:
-            st.write("### 📜 Party Statement PDF")
+            st.write("### 📜 Statement PDF")
             pdf_party = st.selectbox("Select Party:", ["-- Select Party --"] + unique_parties)
             if pdf_party != "-- Select Party --":
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
@@ -424,15 +446,15 @@ elif menu == "📜 Party History & Search":
                         party_df = party_df[party_df['MonthNum'] == month_num]
                         period_str = f"{selected_month} {selected_year}"
 
-                if st.button(f"Generate PDF History"):
+                if st.button(f"Generate Statement"):
                     if not party_df.empty:
                         hist_pdf = create_history_pdf(pdf_party, party_df, period_str)
-                        st.download_button("📥 Download Statement", data=hist_pdf, file_name=f"Statement_{pdf_party.replace(' ','_')}.pdf", mime="application/pdf")
+                        st.download_button("📥 Download PDF", data=hist_pdf, file_name=f"Statement_{pdf_party.replace(' ','_')}.pdf", mime="application/pdf")
                     else: st.warning("No records found.")
 
         with col2:
-            st.write("### 📄 Reprint Old Bill")
-            reprint_qno = st.selectbox("Select Q_No to Reprint:", ["-- Select Q_No --"] + unique_qnos)
+            st.write("### 📄 Reprint Bill")
+            reprint_qno = st.selectbox("Select Q_No:", ["-- Select Q_No --"] + unique_qnos, key="rep")
             if st.button("Generate Bill PDF"):
                 if reprint_qno != "-- Select Q_No --":
                     bill_df = df[df['Q_No'].astype(str) == reprint_qno]
@@ -456,46 +478,80 @@ elif menu == "📜 Party History & Search":
                 else: st.warning("Please select a Q_No.")
 
         with col3:
-            st.write("### ❌ Delete Record")
-            del_qno = st.selectbox("Select Q_No to Delete:", ["-- Select Q_No --"] + unique_qnos)
+            st.write("### ✏️ Edit Record")
+            edit_qno = st.selectbox("Select Q_No to Edit:", ["-- Select Q_No --"] + unique_qnos, key="edit_qno")
+            if edit_qno != "-- Select Q_No --":
+                items_in_qno = df[df['Q_No'].astype(str) == edit_qno]
+                if not items_in_qno.empty:
+                    item_options = items_in_qno['Size'].tolist()
+                    selected_item_to_edit = st.selectbox("Select Item in this Bill:", item_options)
+                    
+                    row_data = items_in_qno[items_in_qno['Size'] == selected_item_to_edit].iloc[0]
+                    
+                    new_party = st.text_input("Edit Party Name:", value=row_data['Party'])
+                    new_item = st.text_input("Edit Item/Part Name:", value=row_data['Size'])
+                    new_price = st.number_input("Edit Total Price (Rs):", value=int(row_data['Total_Price']), step=100)
+                    
+                    if st.button("💾 Update Record", type="primary"):
+                        all_values = sheet.get_all_values()
+                        row_index_to_update = -1
+                        for i, row_vals in enumerate(all_values):
+                            if i == 0: continue
+                            if row_vals[0] == edit_qno and row_vals[3] == selected_item_to_edit:
+                                row_index_to_update = i + 1 
+                                break
+                                
+                        if row_index_to_update != -1:
+                            sheet.update_cell(row_index_to_update, 2, new_party) # Party Col
+                            sheet.update_cell(row_index_to_update, 4, new_item)  # Size Col
+                            sheet.update_cell(row_index_to_update, 7, new_price) # Price Col
+                            st.success("Record Updated Successfully!")
+                            st.cache_resource.clear() # Clear cache to fetch fresh data
+                            st.rerun()
+                        else:
+                            st.error("Could not find the exact row to update.")
+
+        with col4:
+            st.write("### ❌ Delete")
+            del_qno = st.selectbox("Select Q_No to Delete:", ["-- Select Q_No --"] + unique_qnos, key="del")
             if st.button("Delete from Sheet", type="primary"):
                 if del_qno != "-- Select Q_No --":
                     try:
                         cell = sheet.find(del_qno)
                         sheet.delete_rows(cell.row)
-                        st.success(f"Record {del_qno} deleted successfully!")
+                        st.success(f"Record {del_qno} deleted!")
+                        st.cache_resource.clear()
                         st.rerun()
-                    except: st.error("Q_No not found in Sheet.")
+                    except: st.error("Q_No not found.")
                 else: st.warning("Please select a Q_No.")
 
 # ==========================================
-# 3. PART PRICE FINDER PAGE (NEW FEATURE)
+# 3. PART PRICE FINDER PAGE 
 # ==========================================
 elif menu == "🔍 Part Price Finder":
     st.title("Item & Part Price Finder 🔍")
-    st.write("Koi pan party ne past ma kyo part ketla ma apyo hato e ahiya thi check karo.")
+    st.write("Find past prices for a specific Party or Part with smart search.")
     
-    data = sheet.get_all_records()
-    if not data:
+    if main_df.empty:
         st.info("No records found in Google Sheet.")
     else:
-        df = pd.DataFrame(data)
+        df = main_df.copy()
         
         c1, c2 = st.columns(2)
-        search_party_name = c1.text_input("1. Party Name (e.g., Hiral):", placeholder="Enter Party Name...")
-        search_part_name = c2.text_input("2. Part / Item Name (e.g., Motor):", placeholder="Enter Part Name...")
+        search_party_name = c1.selectbox("1. Select Party (Type to search):", ["-- All Parties --"] + unique_parties_list)
+        search_part_name = c2.selectbox("2. Select Part / Item (Type to search):", ["-- All Items --"] + all_items_list)
         
         filtered_df = df.copy()
         
-        if search_party_name:
-            filtered_df = filtered_df[filtered_df['Party'].astype(str).str.contains(search_party_name, case=False, na=False)]
-        if search_part_name:
-            filtered_df = filtered_df[filtered_df['Size'].astype(str).str.contains(search_part_name, case=False, na=False)]
+        if search_party_name != "-- All Parties --":
+            filtered_df = filtered_df[filtered_df['Party'].astype(str).str.strip().str.title() == search_party_name]
+        if search_part_name != "-- All Items --":
+            filtered_df = filtered_df[filtered_df['Size'].astype(str).str.strip() == search_part_name]
             
         st.write("### Search Results")
         
-        if not search_party_name and not search_part_name:
-            st.info("Upar Party nu naam athva Part nu naam lakho etle ahiya details aavse.")
+        if search_party_name == "-- All Parties --" and search_part_name == "-- All Items --":
+            st.info("Please select a Party or Part Name above to see results.")
         elif filtered_df.empty:
             st.warning("Aa naam thi koi entry mali nathi.")
         else:
@@ -503,10 +559,9 @@ elif menu == "🔍 Part Price Finder":
             display_df.rename(columns={'Size': 'Item / Part Name'}, inplace=True)
             st.dataframe(display_df, use_container_width=True)
             
-            # PDF Download option for this specific search
             if st.button("📄 Download Search Result PDF"):
                 pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
-                file_name = f"PriceSearch_{search_party_name}_{search_part_name}.pdf".replace(" ", "_")
+                file_name = f"PriceSearch_Result.pdf"
                 st.download_button("📥 Click Here to Download PDF", data=pdf_buffer, file_name=file_name, mime="application/pdf")
 
 # ==========================================
