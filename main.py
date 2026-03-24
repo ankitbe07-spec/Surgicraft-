@@ -7,6 +7,7 @@ from datetime import datetime
 import calendar
 import pandas as pd
 import io
+import base64
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 
@@ -79,6 +80,19 @@ def format_size_for_ui(size_str):
     if size_str in ["-- All Items --", "-- New Part --"]:
         return size_str
     return format_size(str(size_str))
+
+# --- iOS SPECIAL DOWNLOAD BUTTON ---
+def create_custom_download_link(pdf_buffer, file_name, button_text):
+    b64 = base64.b64encode(pdf_buffer.getvalue()).decode()
+    button_html = f'''
+    <a href="data:application/pdf;base64,{b64}" download="{file_name}" target="_blank"
+       style="display: inline-block; padding: 0.5em 1em; color: white; background-color: #FF4B4B; 
+              text-decoration: none; border-radius: 4px; font-weight: 500; text-align: center;">
+        📄 {button_text}
+    </a>
+    <p style="font-size: 12px; color: gray; margin-top: 5px;"><i>(iPhone ma aa Nava Tab ma khulse. Joi lidha pachi e tab bandh kari dejo etle app ma pacha aavi jasho)</i></p>
+    '''
+    return button_html
 
 # --- HEADER WITH LOGO & GREEN TEXT ---
 def display_header():
@@ -372,10 +386,9 @@ elif menu == "📜 Party History & Edit":
                 display_party_df['Size'] = display_party_df['Size'].apply(format_size)
                 st.dataframe(display_party_df.rename(columns={'Size':'Item/Machine', 'Total_Price':'Price (Rs)'}), use_container_width=True)
                 
-                if st.button(f"📄 Download {pdf_party}'s Record PDF"):
-                    hist_pdf = create_history_pdf(pdf_party, party_df, "Lifetime Record")
-                    # Changed mime type to force direct download on iPhone
-                    st.download_button("📥 Click to Save PDF", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/octet-stream")
+                # --- NEW IPHONE FIX BUTTON ---
+                hist_pdf = create_history_pdf(pdf_party, party_df, "Lifetime Record")
+                st.markdown(create_custom_download_link(hist_pdf, f"{pdf_party}_Record.pdf", f"Download {pdf_party}'s Record PDF"), unsafe_allow_html=True)
 
         with tab2:
             st.write("### Edit Existing Record (By Party)")
@@ -504,11 +517,9 @@ elif menu == "🔍 Part Price Finder":
             display_df.rename(columns={'Size': 'Item / Part Name', 'Total_Price': 'Price (Rs)'}, inplace=True)
             st.dataframe(display_df, use_container_width=True)
             
-            if st.button("📄 Download Search Result PDF"):
-                pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
-                file_name = f"PriceSearch_Result.pdf"
-                # Changed mime type to force direct download on iPhone
-                st.download_button("📥 Click Here to Download PDF", data=pdf_buffer, file_name=file_name, mime="application/octet-stream")
+            # --- NEW IPHONE FIX BUTTON ---
+            pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
+            st.markdown(create_custom_download_link(pdf_buffer, "PriceSearch_Result.pdf", "Download Search Result PDF"), unsafe_allow_html=True)
 
 # ==========================================
 # 4. MASTER SETTINGS PAGE
