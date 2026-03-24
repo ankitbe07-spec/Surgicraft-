@@ -81,18 +81,19 @@ def format_size_for_ui(size_str):
         return size_str
     return format_size(str(size_str))
 
-# --- iOS SPECIAL DOWNLOAD BUTTON ---
-def create_custom_download_link(pdf_buffer, file_name, button_text):
-    b64 = base64.b64encode(pdf_buffer.getvalue()).decode()
-    button_html = f'''
-    <a href="data:application/pdf;base64,{b64}" download="{file_name}" target="_blank"
-       style="display: inline-block; padding: 0.5em 1em; color: white; background-color: #FF4B4B; 
-              text-decoration: none; border-radius: 4px; font-weight: 500; text-align: center;">
-        📄 {button_text}
-    </a>
-    <p style="font-size: 12px; color: gray; margin-top: 5px;"><i>(iPhone ma aa Nava Tab ma khulse. Joi lidha pachi e tab bandh kari dejo etle app ma pacha aavi jasho)</i></p>
+# --- IPHONE SHORTCUT APP FIX (IN-APP PDF VIEWER) ---
+def display_pdf_in_app(pdf_buffer):
+    base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
+    # aakhi PDF app ni andar j khulse
+    pdf_display = f'''
+        <iframe src="data:application/pdf;base64,{base64_pdf}" 
+        width="100%" height="500" type="application/pdf"
+        style="border: 2px solid #ccc; border-radius: 8px;">
+        </iframe>
     '''
-    return button_html
+    st.markdown("### 📄 PDF Preview (Niche Jovo)")
+    st.markdown(pdf_display, unsafe_allow_html=True)
+    st.info("💡 Tame ahiya thi j PDF aakhi vanchi shako cho ane eno screenshot lai shako cho. App mathi bahaar javanu nathi!")
 
 # --- HEADER WITH LOGO & GREEN TEXT ---
 def display_header():
@@ -386,9 +387,10 @@ elif menu == "📜 Party History & Edit":
                 display_party_df['Size'] = display_party_df['Size'].apply(format_size)
                 st.dataframe(display_party_df.rename(columns={'Size':'Item/Machine', 'Total_Price':'Price (Rs)'}), use_container_width=True)
                 
-                # --- NEW IPHONE FIX BUTTON ---
-                hist_pdf = create_history_pdf(pdf_party, party_df, "Lifetime Record")
-                st.markdown(create_custom_download_link(hist_pdf, f"{pdf_party}_Record.pdf", f"Download {pdf_party}'s Record PDF"), unsafe_allow_html=True)
+                # --- IPHONE FRIENDLY PDF BUTTON ---
+                if st.button(f"📄 View {pdf_party}'s PDF Here"):
+                    hist_pdf = create_history_pdf(pdf_party, party_df, "Lifetime Record")
+                    display_pdf_in_app(hist_pdf)
 
         with tab2:
             st.write("### Edit Existing Record (By Party)")
@@ -517,9 +519,10 @@ elif menu == "🔍 Part Price Finder":
             display_df.rename(columns={'Size': 'Item / Part Name', 'Total_Price': 'Price (Rs)'}, inplace=True)
             st.dataframe(display_df, use_container_width=True)
             
-            # --- NEW IPHONE FIX BUTTON ---
-            pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
-            st.markdown(create_custom_download_link(pdf_buffer, "PriceSearch_Result.pdf", "Download Search Result PDF"), unsafe_allow_html=True)
+            # --- IPHONE FRIENDLY PDF BUTTON ---
+            if st.button("📄 View Search Result PDF Here"):
+                pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
+                display_pdf_in_app(pdf_buffer)
 
 # ==========================================
 # 4. MASTER SETTINGS PAGE
