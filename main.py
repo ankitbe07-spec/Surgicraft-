@@ -1,4 +1,3 @@
-
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
@@ -55,7 +54,7 @@ def get_sheet():
     client = gspread.authorize(creds)
     return client.open("Surgicraft_Database").sheet1
 
-# Fetch data early for Auto-suggest Dropdowns
+# Fetch data early
 try:
     sheet = get_sheet()
     all_sheet_data = sheet.get_all_records()
@@ -68,7 +67,7 @@ except Exception as e:
     st.error(f"Google Sheet Connection Error! Error: {e}")
     st.stop()
 
-# --- HELPER FORMAT FUNCTION ---
+# --- HELPER FORMAT FUNCTION (Aa function automatic inch " nishan lagave che) ---
 def format_size(size_str):
     if "x" in size_str:
         parts = size_str.split('x')
@@ -118,7 +117,10 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
         c.drawString(40, y, date_str)
         
         if speed_str == "Spare Part":
-            c.drawString(110, y, f"Part: {size_str}")
+            # Niche part name kapay nahi em setting karyu che
+            part_display = f"Part: {size_str}"
+            if len(part_display) > 60: part_display = part_display[:57] + "..."
+            c.drawString(110, y, part_display)
             c.drawString(460, y, f"{total_price:,.2f}")
             grand_total += total_price; y -= 20
         else:
@@ -164,7 +166,7 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
     c.save(); buffer.seek(0)
     return buffer
 
-# --- PDF GENERATOR (Search) ---
+# --- PDF GENERATOR (Search) - Full name visibility fix ---
 def create_part_search_pdf(party_name, part_name, df):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -179,9 +181,9 @@ def create_part_search_pdf(party_name, part_name, df):
     y = 730
     c.setFont("Helvetica-Bold", 11)
     c.drawString(40, y, "Date")
-    c.drawString(120, y, "Party Name")
-    c.drawString(280, y, "Item / Part Name")
-    c.drawString(460, y, "Price (Rs)")
+    c.drawString(110, y, "Party Name")
+    c.drawString(250, y, "Item / Part Name") # Shifted to give more space
+    c.drawString(470, y, "Price (Rs)")
     c.line(40, y-5, 550, y-5)
     
     y -= 25
@@ -189,9 +191,13 @@ def create_part_search_pdf(party_name, part_name, df):
     
     for index, row in df.iterrows():
         c.drawString(40, y, str(row['Date']))
-        c.drawString(120, y, str(row['Party'])[:22])
-        c.drawString(280, y, str(row['Size'])[:30])
-        c.drawString(460, y, f"{int(row['Total_Price']):,.2f}")
+        c.drawString(110, y, str(row['Party'])[:25]) # Kept safe margin for Party
+        
+        full_size_name = str(row['Size'])
+        if len(full_size_name) > 55: full_size_name = full_size_name[:52] + "..." # Increased limit to 55 characters!
+        
+        c.drawString(250, y, full_size_name) 
+        c.drawString(470, y, f"{int(row['Total_Price']):,.2f}")
         y -= 20
         
         if y < 80:
@@ -199,9 +205,9 @@ def create_part_search_pdf(party_name, part_name, df):
             y = 800
             c.setFont("Helvetica-Bold", 11)
             c.drawString(40, y, "Date")
-            c.drawString(120, y, "Party Name")
-            c.drawString(280, y, "Item / Part Name")
-            c.drawString(460, y, "Price (Rs)")
+            c.drawString(110, y, "Party Name")
+            c.drawString(250, y, "Item / Part Name")
+            c.drawString(470, y, "Price (Rs)")
             c.line(40, y-5, 550, y-5)
             y -= 25
             c.setFont("Helvetica", 10)
@@ -405,21 +411,30 @@ elif menu == "📜 Party History & Edit":
 # ==========================================
 elif menu == "🔍 Part Price Finder":
     display_header()
-    st.write("Dabba par click karo ane upar search box ma sidhu Naam lakhi shako cho.")
+    st.write("Party select karo etle automatic ena j parts nu list aavse!")
     
     if main_df.empty:
         st.info("No records found in Google Sheet.")
     else:
         df = main_df.copy()
+        df['Clean_Party'] = df['Party'].astype(str).str.strip().str.title()
         
         c1, c2 = st.columns(2)
         search_party_name = c1.selectbox("1. Select Party (Type to search):", ["-- All Parties --"] + unique_parties_list, index=0)
-        search_part_name = c2.selectbox("2. Select Part / Item (Type to search):", ["-- All Items --"] + all_items_list, index=0)
+        
+        # --- SMART FILTER LOGIC ---
+        if search_party_name != "-- All Parties --":
+            # Jo party select kari hoy, to khali e party na j parts kadhva
+            party_specific_parts = sorted(df[df['Clean_Party'] == search_party_name]['Size'].astype(str).str.strip().unique().tolist())
+            search_part_name = c2.selectbox("2. Select Part / Item (Type to search):", ["-- All Items --"] + party_specific_parts, index=0)
+        else:
+            # Jo koi party select na kari hoy to badha parts batavva
+            search_part_name = c2.selectbox("2. Select Part / Item (Type to search):", ["-- All Items --"] + all_items_list, index=0)
         
         filtered_df = df.copy()
         
         if search_party_name != "-- All Parties --":
-            filtered_df = filtered_df[filtered_df['Party'].astype(str).str.strip().str.title() == search_party_name]
+            filtered_df = filtered_df[filtered_df['Clean_Party'] == search_party_name]
         if search_part_name != "-- All Items --":
             filtered_df = filtered_df[filtered_df['Size'].astype(str).str.strip() == search_part_name]
             
