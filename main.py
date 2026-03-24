@@ -24,7 +24,7 @@ DEF_SETTINGS = {
     "addons": {
         "VacuumPump": 35000, "Only Provision V.Pump Bush": 18000,
         "DoubleDoor": 30000, "Alarm": 4000, "Gauge": 5000,
-        "PressureSwitch": 6000, "LowHighExtra": 12000
+        "LowHighExtra": 12000
     },
     "tc": "Surgicraft Internal Price List Record."
 }
@@ -253,18 +253,11 @@ if menu == "➕ Add New Entry":
             addons_prices_struct["Low+High Speed Extra"] = lh_price
             
         for addon_name in settings['addons']:
-            if addon_name in ["LowHighExtra", "PressureSwitch"]: continue
+            if addon_name in ["LowHighExtra"]: continue
             if cols[col_idx % 3].checkbox(addon_name):
                 selected_addons.append(addon_name)
                 addons_prices_struct[addon_name] = settings['addons'].get(addon_name, 0)
             col_idx += 1
-            
-        ps_qty = st.selectbox("Pressure Switch Qty:", [0, 1, 2])
-        if ps_qty > 0:
-            ps_unit_price = settings['addons'].get("PressureSwitch", 0)
-            ps_total_price = ps_qty * ps_unit_price
-            addons_prices_struct[f"Pressure Switch ({ps_qty} Qty)"] = ps_total_price
-            selected_addons.append(f"{ps_qty} Pressure Switch")
 
         base_machine_price = int(settings['prices'].get(size, 0))
         
@@ -419,7 +412,6 @@ elif menu == "🔍 Part Price Finder":
         df = main_df.copy()
         
         c1, c2 = st.columns(2)
-        # Using selectbox which acts as searchable dropdown in Streamlit
         search_party_name = c1.selectbox("1. Select Party (Type to search):", ["-- All Parties --"] + unique_parties_list, index=0)
         search_part_name = c2.selectbox("2. Select Part / Item (Type to search):", ["-- All Items --"] + all_items_list, index=0)
         
@@ -447,61 +439,4 @@ elif menu == "🔍 Part Price Finder":
                 st.download_button("📥 Click Here to Download PDF", data=pdf_buffer, file_name=file_name, mime="application/pdf")
 
 # ==========================================
-# 4. MASTER SETTINGS PAGE
-# ==========================================
-elif menu == "⚙️ Master Settings":
-    display_header()
-    st.title("Master Settings 🔒")
-    pwd_input = st.text_input("Enter Master Password:", type="password")
-    
-    if pwd_input != settings.get('password', '1234'):
-        if pwd_input: st.error("❌ Incorrect Password!")
-        st.stop()
-        
-    st.success("Access Granted!")
-    tab1, tab2 = st.tabs(["Machine Prices", "Add-ons"])
-    
-    with tab1:
-        st.subheader("Edit/Remove Sizes")
-        prices = settings['prices']
-        for size, price in list(prices.items()):
-            cA, cB, cC = st.columns([2, 2, 1])
-            cA.write(f"**{format_size(size)}**")
-            prices[size] = cB.number_input("Price", value=price, step=1000, key=f"p_{size}", label_visibility="collapsed")
-            if cC.button("❌ Remove", key=f"d_{size}"):
-                del prices[size]; save_settings(settings); st.rerun()
-                    
-        st.write("---")
-        c1, c2, c3 = st.columns(3)
-        n_w = c1.text_input("Width (e.g. 24)")
-        n_l = c2.text_input("Length (e.g. 48)")
-        n_p = c3.number_input("Base Price", value=0, step=1000)
-        if st.button("➕ Add New Size"):
-            if n_w and n_l and n_p > 0:
-                settings['prices'][f"{n_w}x{n_l}"] = n_p
-                save_settings(settings); st.rerun()
-
-    with tab2:
-        st.subheader("Edit/Remove Add-ons")
-        addons = settings['addons']
-        for name, price in list(addons.items()):
-            if name in ["LowHighExtra", "PressureSwitch"]:
-                cA, cB = st.columns([2, 3])
-                cA.write(f"**{name}**")
-                addons[name] = cB.number_input("Price", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
-            else:
-                cA, cB, cC = st.columns([2, 2, 1])
-                cA.write(f"**{name}**")
-                addons[name] = cB.number_input("Price", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
-                if cC.button("❌ Remove", key=f"da_{name}"):
-                    del addons[name]; save_settings(settings); st.rerun()
-                        
-        if st.button("💾 Save Add-on Changes", type="primary"): save_settings(settings); st.success("Updated!")
-        st.write("---")
-        c1, c2 = st.columns(2)
-        new_a = c1.text_input("New Add-on Name")
-        new_p = c2.number_input("Add-on Price", value=0, step=500)
-        if st.button("➕ Add New Option"):
-            if new_a and new_p > 0:
-                settings['addons'][new_a] = new_p
-                save_settings(settings); st.rerun()
+# 4. MASTE
