@@ -14,6 +14,7 @@ st.set_page_config(page_title="Surgicraft App", layout="wide")
 # --- SETTINGS MANAGER ---
 SETTINGS_FILE = "surgicraft_settings.json"
 DEF_SETTINGS = {
+    "password": "1234",
     "prices": {
         "16x24": 160000, "16x36": 175000, "16x39": 180000, "16x48": 190000,
         "20x24": 195000, "20x36": 210000, "20x39": 215000, "20x48": 225000,
@@ -71,9 +72,14 @@ def create_bill_pdf(party, q_no, items, date_str):
     y -= 25; c.setFont("Helvetica", 10); grand_total = 0
     for i, item in enumerate(items, 1):
         c.drawString(50, y, str(i)); c.drawString(80, y, item['size'])
-        opts_str = f"Speed: {item['speed']} | " + ", ".join(item['options'])
+        # Handle options format for both new cart items and old db records
+        opts = item['options']
+        if isinstance(opts, str):
+            try: opts = json.loads(opts)
+            except: opts = [opts]
+        opts_str = f"Speed: {item['speed']} | " + ", ".join(opts)
         c.drawString(180, y, opts_str[:55]); c.drawString(450, y, str(item['total']))
-        grand_total += item['total']; y -= 20
+        grand_total += int(item['total']); y -= 20
             
     c.line(50, y-5, 550, y-5)
     c.setFont("Helvetica-Bold", 12); c.drawString(50, y-25, f"GRAND TOTAL VALUE: Rs. {grand_total}/-")
@@ -129,10 +135,10 @@ if menu == "📝 Create Quotation":
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        widths = sorted(list(set([k.split('x')[0] for k in settings['prices'].keys()])))
+        widths = sorted(list(set([k.split('x')[0] for k in settings['prices'].keys() if 'x' in k])))
         w_val = st.selectbox("Width", widths if widths else ["0"])
     with col2:
-        lengths = sorted(list(set([k.split('x')[1] for k in settings['prices'].keys()])))
+        lengths = sorted(list(set([k.split('x')[1] for k in settings['prices'].keys() if 'x' in k])))
         l_val = st.selectbox("Length", lengths if lengths else ["0"])
     with col3:
         speed = st.selectbox("Speed", ["Low", "High", "Low+High"])
@@ -165,10 +171,10 @@ if menu == "📝 Create Quotation":
         if st.button("➕ ADD TO PRICE LIST", type="primary"):
             if not party_name: st.warning("Please enter Party Name first!")
             else:
-                st.session_state.cart.append({"size": size, "speed": speed, "options": selected_addons, "total": total_price})
+                # Appending party_name so it shows in the cart
+                st.session_state.cart.append({"party": party_name, "size": size, "speed": speed, "options": selected_addons, "total": total_price})
                 dt = datetime.now().strftime("%d-%m-%Y")
                 
-                # Check if Headers exist, if not add them
                 if not sheet.get_all_values():
                     sheet.append_row(["Q_No", "Party", "Date", "Size", "Speed", "Options", "Total_Price"])
                     
@@ -179,6 +185,8 @@ if menu == "📝 Create Quotation":
         st.write("---")
         st.subheader("Current Cart")
         df = pd.DataFrame(st.session_state.cart)
+        # Rename columns for better display
+        df.rename(columns={'party': 'Party Name', 'size': 'Size', 'speed': 'Speed', 'options': 'Addons', 'total': 'Price'}, inplace=True)
         st.dataframe(df, use_container_width=True)
         
         pdf_buffer = create_bill_pdf(party_name, st.session_state.q_no, st.session_state.cart, datetime.now().strftime("%d-%m-%Y"))
@@ -202,25 +210,28 @@ elif menu == "📜 Party History & Search":
     else:
         df = pd.DataFrame(data)
         
-        # Search Box
-        search_party = st.text_input("🔍 Search Party Name:", placeholder="Type name to filter...")
+        # Advance Search Box
+        search_party = st.text_input("🔍 Search Party Name or Q_No:", placeholder="Type name or Q_No to search...")
         
         if search_party:
-            filtered_df = df[df['Party'].str.contains(search_party, case=False, na=False)]
+            # Filter by Party Name OR Q_No
+            mask = df['Party'].astype(str).str.contains(search_party, case=False, na=False) | \
+                   df['Q_No'].astype(str).str.contains(search_party, case=False, na=False)
+            filtered_df = df[mask]
         else:
-            filtered_df = df.tail(50) # Show last 50 by default
+            filtered_df = df.tail(50)
             
         st.dataframe(filtered_df, use_container_width=True)
         
         st.write("---")
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.write("### 📄 Generate History PDF")
-            pdf_party = st.text_input("Enter exact Party Name for PDF:")
-            if st.button("Generate Party History PDF"):
+            st.write("### 📜 Party History PDF")
+            pdf_party = st.text_input("Enter Party Name for History PDF:")
+            if st.button("Generate History PDF"):
                 if pdf_party:
-                    party_df = df[df['Party'].str.lower() == pdf_party.lower()]
+                    party_df = df[df['Party'].astype(str).str.lower() == pdf_party.lower()]
                     if not party_df.empty:
                         hist_pdf = create_history_pdf(pdf_party, party_df)
                         st.download_button("📥 Download History PDF", data=hist_pdf, file_name=f"History_{pdf_party}.pdf", mime="application/pdf")
@@ -230,12 +241,29 @@ elif menu == "📜 Party History & Search":
                     st.warning("Please enter a party name.")
 
         with col2:
+            st.write("### 📄 Reprint Old Bill")
+            reprint_qno = st.text_input("Enter Q_No to Reprint Bill:")
+            if st.button("Generate Bill PDF"):
+                if reprint_qno:
+                    bill_df = df[df['Q_No'].astype(str) == reprint_qno]
+                    if not bill_df.empty:
+                        party_n = bill_df.iloc[0]['Party']
+                        date_n = bill_df.iloc[0]['Date']
+                        # Convert dataframe rows to items list for the PDF function
+                        items_list = []
+                        for _, r in bill_df.iterrows():
+                            items_list.append({"size": r['Size'], "speed": r['Speed'], "options": r['Options'], "total": r['Total_Price']})
+                        
+                        bill_pdf = create_bill_pdf(party_n, reprint_qno, items_list, str(date_n))
+                        st.download_button("📥 Download Bill PDF", data=bill_pdf, file_name=f"Reprint_{reprint_qno.replace('/','_')}.pdf", mime="application/pdf")
+                    else:
+                        st.warning("Q_No not found.")
+
+        with col3:
             st.write("### ❌ Delete Record")
-            st.caption("Delete a record using its Q_No")
-            del_qno = st.text_input("Enter Q_No to delete:")
+            del_qno = st.text_input("Enter exact Q_No to Delete:")
             if st.button("Delete from Sheet", type="primary"):
                 if del_qno:
-                    # Find row in sheet
                     try:
                         cell = sheet.find(del_qno)
                         sheet.delete_rows(cell.row)
@@ -249,20 +277,38 @@ elif menu == "📜 Party History & Search":
 # 3. MASTER SETTINGS PAGE
 # ==========================================
 elif menu == "⚙️ Master Settings":
-    st.title("Master Settings")
+    st.title("Master Settings 🔒")
+    
+    # Password Protection
+    pwd_input = st.text_input("Enter Master Password to Access Settings:", type="password")
+    
+    if pwd_input != settings.get('password', '1234'):
+        if pwd_input:
+            st.error("❌ Incorrect Password!")
+        st.stop()
+        
+    st.success("Access Granted!")
     st.info("Changes made here will be saved permanently.")
     
-    tab1, tab2 = st.tabs(["Machine Prices", "Add-ons & T&C"])
+    tab1, tab2, tab3 = st.tabs(["Machine Prices", "Add-ons", "Security & T&C"])
     
     with tab1:
-        st.subheader("Edit Current Prices")
+        st.subheader("Edit or Remove Current Sizes")
         prices = settings['prices']
-        new_prices = {}
         
-        cols = st.columns(4)
-        for i, (size, price) in enumerate(prices.items()):
-            new_prices[size] = cols[i % 4].number_input(f"Size {size}", value=price, step=1000)
-            
+        for size, price in list(prices.items()):
+            colA, colB, colC = st.columns([2, 2, 1])
+            with colA:
+                st.write(f"**{size}**")
+            with colB:
+                new_val = st.number_input(f"Price for {size}", value=price, step=1000, key=f"p_{size}", label_visibility="collapsed")
+                prices[size] = new_val
+            with colC:
+                if st.button("❌ Remove", key=f"del_size_{size}"):
+                    del prices[size]
+                    save_settings(settings)
+                    st.rerun()
+                    
         st.write("---")
         st.subheader("Add New Size")
         colA, colB, colC = st.columns(3)
@@ -270,29 +316,69 @@ elif menu == "⚙️ Master Settings":
         n_l = colB.text_input("Length (e.g. 48)")
         n_p = colC.number_input("Price", value=0, step=1000)
         
-        if st.button("Save Prices"):
+        if st.button("➕ Add New Size"):
             if n_w and n_l and n_p > 0:
-                new_prices[f"{n_w}x{n_l}"] = n_p
-            settings['prices'] = new_prices
-            save_settings(settings)
-            st.success("Prices Updated!")
-            st.rerun()
+                settings['prices'][f"{n_w}x{n_l}"] = n_p
+                save_settings(settings)
+                st.success("New Size Added!")
+                st.rerun()
+            else:
+                st.error("Please fill all fields.")
 
     with tab2:
-        st.subheader("Edit Add-on Prices")
+        st.subheader("Edit or Remove Current Add-ons")
         addons = settings['addons']
-        new_addons = {}
         
-        cols = st.columns(3)
-        for i, (name, price) in enumerate(addons.items()):
-            new_addons[name] = cols[i % 3].number_input(f"{name}", value=price, step=500)
+        for name, price in list(addons.items()):
+            if name in ["LowHighExtra", "PressureSwitch"]:
+                colA, colB = st.columns([2, 3])
+                colA.write(f"**{name}** (System Addon)")
+                addons[name] = colB.number_input(f"Price for {name}", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
+            else:
+                colA, colB, colC = st.columns([2, 2, 1])
+                with colA:
+                    st.write(f"**{name}**")
+                with colB:
+                    addons[name] = st.number_input(f"Price for {name}", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
+                with colC:
+                    if st.button("❌ Remove", key=f"del_addon_{name}"):
+                        del addons[name]
+                        save_settings(settings)
+                        st.rerun()
+                        
+        if st.button("💾 Save Add-on Prices"):
+            save_settings(settings)
+            st.success("Add-on Prices Updated!")
             
         st.write("---")
-        new_tc = st.text_area("Terms & Conditions", value=settings.get('tc', ''))
-        
-        if st.button("Save Add-ons & T&C"):
-            settings['addons'] = new_addons
+        st.subheader("Add New Add-on Option")
+        c1, c2 = st.columns(2)
+        new_addon_name = c1.text_input("Add-on Name")
+        new_addon_price = c2.number_input("Add-on Price", value=0, step=500)
+        if st.button("➕ Add New Option"):
+            if new_addon_name and new_addon_price > 0:
+                settings['addons'][new_addon_name] = new_addon_price
+                save_settings(settings)
+                st.success(f"{new_addon_name} added!")
+                st.rerun()
+            else:
+                st.error("Please enter valid name and price.")
+
+    with tab3:
+        st.subheader("Change Master Password")
+        new_pwd = st.text_input("New Password:", type="password")
+        if st.button("Update Password"):
+            if new_pwd:
+                settings['password'] = new_pwd
+                save_settings(settings)
+                st.success("Password Updated!")
+            else:
+                st.warning("Password cannot be empty.")
+                
+        st.write("---")
+        st.subheader("Terms & Conditions")
+        new_tc = st.text_area("T&C for PDF", value=settings.get('tc', ''))
+        if st.button("Update T&C"):
             settings['tc'] = new_tc
             save_settings(settings)
-            st.success("Add-ons and T&C Updated!")
-            st.rerun()
+            st.success("T&C Updated!")
