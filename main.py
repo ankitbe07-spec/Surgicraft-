@@ -62,7 +62,6 @@ try:
     
     unique_parties_list = sorted(main_df['Party'].astype(str).str.strip().str.title().unique().tolist()) if not main_df.empty else []
     unique_parts_list = sorted(main_df[main_df['Speed'] == 'Spare Part']['Size'].astype(str).str.strip().unique().tolist()) if not main_df.empty else []
-    all_items_list = sorted(main_df['Size'].astype(str).str.strip().unique().tolist()) if not main_df.empty else []
 except Exception as e:
     st.error(f"Google Sheet Connection Error! Error: {e}")
     st.stop()
@@ -86,7 +85,7 @@ def display_header():
     st.markdown("<p style='color: #00b300; font-weight: bold; margin-top: 0px;'>Created by Ankit Mistry</p>", unsafe_allow_html=True)
     st.write("---")
 
-# --- PDF GENERATOR (Simple format for internal use) ---
+# --- PDF GENERATOR ---
 def create_history_pdf(party, records_df, period_str="Lifetime"):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -170,8 +169,8 @@ def create_part_search_pdf(party_name, part_name, df):
     c.drawString(40, 800, "Surgicraft Item / Part Price Report")
     
     c.setFont("Helvetica", 11)
-    c.drawString(40, 780, f"Party: {party_name if party_name and party_name != '-- All Parties --' else 'All Parties'}")
-    c.drawString(40, 765, f"Item/Part: {part_name if part_name and part_name != '-- All Items --' else 'All Items'}")
+    c.drawString(40, 780, f"Party: {party_name if party_name else 'All Parties'}")
+    c.drawString(40, 765, f"Item/Part Search: {part_name if part_name else 'All Items'}")
     c.drawString(400, 780, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
     y = 730
@@ -336,7 +335,6 @@ elif menu == "📜 Party History & Edit":
             if edit_party != "-- Select Party --":
                 party_items = df[df['Clean_Party'] == edit_party].copy()
                 
-                # Create a nice string for dropdown selection
                 party_items['Display'] = party_items['Date'].astype(str) + " | " + party_items['Size'].astype(str) + " | Rs. " + party_items['Total_Price'].astype(str)
                 item_options = party_items['Display'].tolist()
                 
@@ -354,7 +352,6 @@ elif menu == "📜 Party History & Edit":
                         all_values = sheet.get_all_values()
                         row_index_to_update = -1
                         
-                        # Find the exact row based on Party, Date, Size, and Price
                         for i, row_vals in enumerate(all_values):
                             if i == 0: continue
                             if (row_vals[1].strip().title() == edit_party and 
@@ -412,30 +409,32 @@ elif menu == "📜 Party History & Edit":
 # ==========================================
 elif menu == "🔍 Part Price Finder":
     display_header()
-    st.write("Find past prices for a specific Party or Part with smart search.")
+    st.write("Keyboard thi sidhu type kari ne items/party shodi shako cho.")
     
     if main_df.empty:
         st.info("No records found in Google Sheet.")
     else:
         df = main_df.copy()
         
+        # CHANGED FROM SELECTBOX TO TEXT_INPUT FOR EASY MOBILE TYPING
         c1, c2 = st.columns(2)
-        search_party_name = c1.selectbox("1. Select Party (Type to search):", ["-- All Parties --"] + unique_parties_list)
-        search_part_name = c2.selectbox("2. Select Part / Item (Type to search):", ["-- All Items --"] + all_items_list)
+        search_party_name = c1.text_input("1. Type Party Name:", placeholder="Start typing party name...")
+        search_part_name = c2.text_input("2. Type Part / Item Name:", placeholder="Start typing item name...")
         
         filtered_df = df.copy()
         
-        if search_party_name != "-- All Parties --":
-            filtered_df = filtered_df[filtered_df['Party'].astype(str).str.strip().str.title() == search_party_name]
-        if search_part_name != "-- All Items --":
-            filtered_df = filtered_df[filtered_df['Size'].astype(str).str.strip() == search_part_name]
+        # Live Filtering logic (Case insensitive)
+        if search_party_name:
+            filtered_df = filtered_df[filtered_df['Party'].astype(str).str.contains(search_party_name, case=False, na=False)]
+        if search_part_name:
+            filtered_df = filtered_df[filtered_df['Size'].astype(str).str.contains(search_part_name, case=False, na=False)]
             
         st.write("### Search Results")
         
-        if search_party_name == "-- All Parties --" and search_part_name == "-- All Items --":
-            st.info("Please select a Party or Part Name above to see results.")
+        if not search_party_name and not search_part_name:
+            st.info("Upar na dabba ma click kari ne Party athva Part nu naam lakho...")
         elif filtered_df.empty:
-            st.warning("Aa naam thi koi entry mali nathi.")
+            st.warning("Aa naam thi koi entry mali nathi. Spelling check karo.")
         else:
             display_df = filtered_df[['Date', 'Party', 'Size', 'Total_Price']].copy()
             display_df.rename(columns={'Size': 'Item / Part Name', 'Total_Price': 'Price (Rs)'}, inplace=True)
