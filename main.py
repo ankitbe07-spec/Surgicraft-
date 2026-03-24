@@ -81,19 +81,17 @@ def format_size_for_ui(size_str):
         return size_str
     return format_size(str(size_str))
 
-# --- IPHONE SHORTCUT APP FIX (IN-APP PDF VIEWER) ---
+# --- COMBO: IPHONE IN-APP PREVIEW ---
 def display_pdf_in_app(pdf_buffer):
     base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
-    # aakhi PDF app ni andar j khulse
     pdf_display = f'''
         <iframe src="data:application/pdf;base64,{base64_pdf}" 
-        width="100%" height="500" type="application/pdf"
+        width="100%" height="450" type="application/pdf"
         style="border: 2px solid #ccc; border-radius: 8px;">
         </iframe>
     '''
-    st.markdown("### 📄 PDF Preview (Niche Jovo)")
+    st.markdown("### 📄 PDF Preview (Screenshot lai shako cho)")
     st.markdown(pdf_display, unsafe_allow_html=True)
-    st.info("💡 Tame ahiya thi j PDF aakhi vanchi shako cho ane eno screenshot lai shako cho. App mathi bahaar javanu nathi!")
 
 # --- HEADER WITH LOGO & GREEN TEXT ---
 def display_header():
@@ -387,10 +385,11 @@ elif menu == "📜 Party History & Edit":
                 display_party_df['Size'] = display_party_df['Size'].apply(format_size)
                 st.dataframe(display_party_df.rename(columns={'Size':'Item/Machine', 'Total_Price':'Price (Rs)'}), use_container_width=True)
                 
-                # --- IPHONE FRIENDLY PDF BUTTON ---
                 if st.button(f"📄 View {pdf_party}'s PDF Here"):
                     hist_pdf = create_history_pdf(pdf_party, party_df, "Lifetime Record")
                     display_pdf_in_app(hist_pdf)
+                    # Android/PC mate direct download button
+                    st.download_button("📥 Click Here to Download PDF (For Android / PC)", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf")
 
         with tab2:
             st.write("### Edit Existing Record (By Party)")
@@ -519,10 +518,11 @@ elif menu == "🔍 Part Price Finder":
             display_df.rename(columns={'Size': 'Item / Part Name', 'Total_Price': 'Price (Rs)'}, inplace=True)
             st.dataframe(display_df, use_container_width=True)
             
-            # --- IPHONE FRIENDLY PDF BUTTON ---
             if st.button("📄 View Search Result PDF Here"):
                 pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
                 display_pdf_in_app(pdf_buffer)
+                # Android/PC mate direct download button
+                st.download_button("📥 Click Here to Download PDF (For Android / PC)", data=pdf_buffer, file_name="PriceSearch_Result.pdf", mime="application/pdf")
 
 # ==========================================
 # 4. MASTER SETTINGS PAGE
