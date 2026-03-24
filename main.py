@@ -40,7 +40,6 @@ def save_settings(data):
         json.dump(data, f)
 
 settings = load_settings()
-LOGO_PATH = "logo.png"
 
 # --- SESSION STATE ---
 if 'cart' not in st.session_state: st.session_state.cart = []
@@ -55,7 +54,7 @@ def get_sheet():
     client = gspread.authorize(creds)
     return client.open("Surgicraft_Database").sheet1
 
-# --- HELPER FORMAT FUNCTION (Inch formatting) ---
+# --- HELPER FORMAT FUNCTION ---
 def format_size(size_str):
     if "x" in size_str:
         parts = size_str.split('x')
@@ -63,79 +62,74 @@ def format_size(size_str):
             return f'{parts[0].strip()}" x {parts[1].strip()}"'
     return size_str
 
-# --- PDF GENERATORS ---
+# --- PDF GENERATORS (Clean & Spacious Layout) ---
 def create_bill_pdf(party, q_no, items_data, date_str):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     
-    text_start_x = 50
-    if os.path.exists(LOGO_PATH):
-        try:
-            c.drawImage(LOGO_PATH, 50, 740, width=80, height=50, mask='auto')
-            text_start_x = 150
-        except: pass
-        
-    c.setFont("Helvetica-Bold", 20); c.drawString(text_start_x, 780, "SURGICRAFT INDUSTRIES")
-    c.setFont("Helvetica", 10); c.drawString(text_start_x, 765, "Manufacturers of Hospital Equipment | Since 1985")
-    c.line(50, 730, 550, 730)
-    
+    # Header removed to save space. Directly starting from Party details.
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(50, 700, f"Quotation No: {q_no}"); c.drawString(400, 700, f"Date: {date_str}")
-    c.drawString(50, 680, f"Party Name: {party}")
+    c.drawString(40, 800, f"Quotation No: {q_no}")
+    c.drawString(400, 800, f"Date: {date_str}")
+    c.drawString(40, 780, f"Party Name: {party}")
     
-    y = 650; c.setFont("Helvetica-Bold", 11)
-    c.drawString(50, y, "Sr."); c.drawString(90, y, "Description"); c.drawString(460, y, "Amount (Rs)")
-    c.line(50, y-5, 550, y-5)
+    y = 750; c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, y, "Sr."); c.drawString(90, y, "Description / Particulars"); c.drawString(460, y, "Amount (Rs)")
+    c.line(40, y-5, 550, y-5)
     
     y -= 25; c.setFont("Helvetica", 11); grand_total = 0
     
     for i, item in enumerate(items_data, 1):
-        base_size = format_size(item.get('size', 'Unknown Size'))
-        base_price = int(item.get('base_price', 0))
-        
-        c.drawString(50, y, str(i)); c.setFont("Helvetica-Bold", 11); c.drawString(90, y, f"Machine Size: {base_size}"); c.setFont("Helvetica", 11);
-        if base_price > 0: c.drawString(460, y, f"{base_price:,.2f}")
-        grand_total += base_price; y -= 18
-        
         speed = item.get('speed', 'Low')
-        c.setFont("Helvetica-Oblique", 11); c.drawString(100, y, f"  • Speed: {speed}"); c.setFont("Helvetica", 11);
-        y -= 18
+        base_size = format_size(item.get('size', 'Unknown Size'))
+        total_item_price = int(item.get('total', 0))
         
-        raw_addons = item.get('addons_breakdown', {})
-        addons_dict = {}
+        c.drawString(40, y, str(i))
         
-        if isinstance(raw_addons, str):
-            try:
-                parsed = json.loads(raw_addons)
-                if isinstance(parsed, dict): addons_dict = parsed
-                elif isinstance(parsed, list): addons_dict = {addon: 0 for addon in parsed}
-            except:
-                addons_dict = {raw_addons: 0}
-        elif isinstance(raw_addons, list):
-            addons_dict = {addon: 0 for addon in raw_addons}
-        elif isinstance(raw_addons, dict):
-            addons_dict = raw_addons
+        if speed == "Spare Part":
+            # For Spare Parts
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(90, y, f"Part / Item: {base_size}")
+            c.drawString(460, y, f"{total_item_price:,.2f}")
+            c.setFont("Helvetica", 11)
+            grand_total += total_item_price; y -= 25
+        else:
+            # For Machines
+            base_price = int(item.get('base_price', 0))
+            c.setFont("Helvetica-Bold", 11); c.drawString(90, y, f"Machine Size: {base_size}"); c.setFont("Helvetica", 11)
+            if base_price > 0: c.drawString(460, y, f"{base_price:,.2f}")
+            grand_total += base_price; y -= 18
             
-        for name, price in addons_dict.items():
-            price_val = int(price) if price else 0
-            c.drawString(100, y, f"  • Addon: {name}")
-            if price_val > 0: 
-                c.drawString(460, y, f"{price_val:,.2f}")
-                grand_total += price_val
+            c.setFont("Helvetica-Oblique", 11); c.drawString(100, y, f"  • Speed: {speed}"); c.setFont("Helvetica", 11);
             y -= 18
             
-        y -= 10
-        if y < 150:
-            c.showPage(); y = 750; c.setFont("Helvetica", 11)
-            c.drawString(50, y, "Sr."); c.drawString(90, y, "Description"); c.drawString(460, y, "Amount (Rs)")
-            c.line(50, y-5, 550, y-5); y -= 25
+            raw_addons = item.get('addons_breakdown', {})
+            addons_dict = {}
+            if isinstance(raw_addons, str):
+                try:
+                    parsed = json.loads(raw_addons)
+                    addons_dict = parsed if isinstance(parsed, dict) else {addon: 0 for addon in parsed}
+                except: addons_dict = {raw_addons: 0}
+            elif isinstance(raw_addons, list): addons_dict = {addon: 0 for addon in raw_addons}
+            elif isinstance(raw_addons, dict): addons_dict = raw_addons
+                
+            for name, price in addons_dict.items():
+                price_val = int(price) if price else 0
+                c.drawString(100, y, f"  • Addon: {name}")
+                if price_val > 0: 
+                    c.drawString(460, y, f"{price_val:,.2f}")
+                    grand_total += price_val
+                y -= 18
+            y -= 10
+            
+        if y < 100:
+            c.showPage(); y = 800; c.setFont("Helvetica-Bold", 11)
+            c.drawString(40, y, "Sr."); c.drawString(90, y, "Description / Particulars"); c.drawString(460, y, "Amount (Rs)")
+            c.line(40, y-5, 550, y-5); y -= 25; c.setFont("Helvetica", 11)
 
-    if grand_total == 0 and item.get('total'):
-        grand_total = int(item.get('total'))
-
-    c.line(50, y-5, 550, y-5)
-    c.setFont("Helvetica-Bold", 12); c.drawString(50, y-25, f"GRAND TOTAL VALUE: Rs. {grand_total:,.2f}/-")
-    c.setFont("Helvetica-Oblique", 9); c.drawString(50, 50, settings['tc'])
+    c.line(40, y-5, 550, y-5)
+    c.setFont("Helvetica-Bold", 12); c.drawString(40, y-25, f"GRAND TOTAL VALUE: Rs. {grand_total:,.2f}/-")
+    c.setFont("Helvetica-Oblique", 9); c.drawString(40, 40, settings['tc'])
     
     c.save(); buffer.seek(0)
     return buffer
@@ -144,23 +138,14 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     
-    text_start_x = 40
-    if os.path.exists(LOGO_PATH):
-        try:
-            c.drawImage(LOGO_PATH, 40, 750, width=60, height=40, mask='auto')
-            text_start_x = 120
-        except: pass
+    # Clean Header for History
+    c.setFont("Helvetica-Bold", 14); c.drawString(40, 800, f"Account History Statement ({period_str})")
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, 775, f"Party Name: {party}")
+    c.drawString(400, 775, f"Date generated: {datetime.now().strftime('%d-%m-%Y')}")
     
-    c.setFont("Helvetica-Bold", 20); c.drawString(text_start_x, 780, "SURGICRAFT INDUSTRIES")
-    c.setFont("Helvetica", 12); c.drawString(text_start_x, 765, f"{period_str} Account Statement (Detailed)")
-    c.line(40, 740, 550, 740)
-    
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(40, 710, f"Party Name: {party}"); c.drawString(400, 710, f"Date generated: {datetime.now().strftime('%d-%m-%Y')}")
-    
-    # Removed Q.No, given more space to Description
-    y = 670; c.setFont("Helvetica-Bold", 11)
-    c.drawString(40, y, "Date"); c.drawString(100, y, "Description / Details"); c.drawString(460, y, "Amount (Rs)")
+    y = 740; c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, y, "Date"); c.drawString(110, y, "Description / Details"); c.drawString(460, y, "Amount (Rs)")
     c.line(40, y-5, 550, y-5)
     
     y -= 25; c.setFont("Helvetica", 11); grand_total = 0
@@ -168,8 +153,7 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
     try:
         records_df['DateObj'] = pd.to_datetime(records_df['Date'], format="%d-%m-%Y", errors='coerce')
         records_df = records_df.sort_values('DateObj')
-    except:
-        pass
+    except: pass
 
     for index, row in records_df.iterrows():
         date_str = str(row['Date'])
@@ -177,57 +161,48 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
         speed_str = str(row['Speed'])
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
         
-        # Base Price
-        base_price = int(settings['prices'].get(str(row['Size']), 0))
-        
-        # Addons Dictionary
-        raw_addons = row.get('Options', '{}')
-        addons_dict = {}
-        if isinstance(raw_addons, str):
-            try:
-                parsed = json.loads(raw_addons)
-                if isinstance(parsed, dict): addons_dict = parsed
-                elif isinstance(parsed, list): addons_dict = {addon: 0 for addon in parsed}
-            except:
-                addons_dict = {raw_addons: 0}
-        elif isinstance(raw_addons, list):
-            addons_dict = {addon: 0 for addon in raw_addons}
-        elif isinstance(raw_addons, dict):
-            addons_dict = raw_addons
-
-        # Print 1: Date & Machine Size
         c.setFont("Helvetica-Bold", 10)
-        c.drawString(40, y, date_str); c.drawString(100, y, f"Machine Size: {size_str}")
-        if base_price > 0:
-            c.drawString(460, y, f"{base_price:,.2f}")
+        c.drawString(40, y, date_str)
+        
+        if speed_str == "Spare Part":
+            c.drawString(110, y, f"Part: {size_str}")
+            c.drawString(460, y, f"{total_price:,.2f}")
+            grand_total += total_price; y -= 20
         else:
-            c.drawString(460, y, f"{total_price:,.2f}") # Fallback for very old records
-        y -= 16
-        
-        # Print 2: Speed
-        c.setFont("Helvetica-Oblique", 10)
-        c.drawString(110, y, f"• Speed: {speed_str}")
-        y -= 16
-        
-        # Print 3: Addons Loop
-        for name, price in addons_dict.items():
-            p_val = int(price) if price else 0
-            c.drawString(110, y, f"• {name}")
-            if p_val > 0:
-                c.drawString(460, y, f"{p_val:,.2f}")
+            base_price = int(settings['prices'].get(str(row['Size']), 0))
+            c.drawString(110, y, f"Machine Size: {size_str}")
+            if base_price > 0: c.drawString(460, y, f"{base_price:,.2f}")
+            else: c.drawString(460, y, f"{total_price:,.2f}")
             y -= 16
             
-        # Print 4: Subtotal for this specific bill
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(110, y, "Bill Total:")
-        c.drawString(460, y, f"{total_price:,.2f}")
+            c.setFont("Helvetica-Oblique", 10)
+            c.drawString(120, y, f"• Speed: {speed_str}")
+            y -= 16
+            
+            raw_addons = row.get('Options', '{}')
+            addons_dict = {}
+            if isinstance(raw_addons, str):
+                try:
+                    parsed = json.loads(raw_addons)
+                    addons_dict = parsed if isinstance(parsed, dict) else {addon: 0 for addon in parsed}
+                except: addons_dict = {raw_addons: 0}
+            elif isinstance(raw_addons, list): addons_dict = {addon: 0 for addon in raw_addons}
+            elif isinstance(raw_addons, dict): addons_dict = raw_addons
+
+            for name, price in addons_dict.items():
+                p_val = int(price) if price else 0
+                c.drawString(120, y, f"• {name}")
+                if p_val > 0: c.drawString(460, y, f"{p_val:,.2f}")
+                y -= 16
+                
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(120, y, "Bill Total:")
+            c.drawString(460, y, f"{total_price:,.2f}")
+            grand_total += total_price; y -= 25
         
-        grand_total += total_price
-        y -= 25 # Space between different bills
-        
-        if y < 100:
-            c.showPage(); y = 750; c.setFont("Helvetica-Bold", 11)
-            c.drawString(40, y, "Date"); c.drawString(100, y, "Description / Details"); c.drawString(460, y, "Amount (Rs)")
+        if y < 80:
+            c.showPage(); y = 800; c.setFont("Helvetica-Bold", 11)
+            c.drawString(40, y, "Date"); c.drawString(110, y, "Description / Details"); c.drawString(460, y, "Amount (Rs)")
             c.line(40, y-5, 550, y-5); y -= 25
         
     c.line(40, y-5, 550, y-5)
@@ -236,93 +211,100 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
     c.save(); buffer.seek(0)
     return buffer
 
-
 # --- SIDEBAR MENU ---
 st.sidebar.title("🏥 Surgicraft Menu")
-menu = st.sidebar.radio("Go to:", ["➕ New Quotation Session", "📜 Party History & Search", "⚙️ Master Settings"])
+menu = st.sidebar.radio("Go to:", ["➕ New Quotation / Bill", "📜 Party History & Search", "⚙️ Master Settings"])
 
-try:
-    sheet = get_sheet()
+try: sheet = get_sheet()
 except Exception as e:
     st.error(f"Google Sheet Connection Error! Error: {e}")
     st.stop()
 
-
 # ==========================================
 # 1. CREATE QUOTATION PAGE
 # ==========================================
-if menu == "➕ New Quotation Session":
-    st.title("Surgicraft Industries") 
-    st.caption("Created by Ankit Mistry") 
-    
-    if os.path.exists(LOGO_PATH):
-        st.image(LOGO_PATH, width=150)
+if menu == "➕ New Quotation / Bill":
+    st.title("Surgicraft Billing & Quotation") 
+    party_name = st.text_input("Party Name:", placeholder="Enter customer name...")
     st.write("---")
     
-    party_name = st.text_input("Party Name:", placeholder="Enter customer name...")
+    # Navo Option: Machine ke Spare Part?
+    entry_type = st.radio("What do you want to add?", ["Machine", "Spare Part / Custom Item"], horizontal=True)
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        widths = sorted(list(set([k.split('x')[0] for k in settings['prices'].keys() if 'x' in k])))
-        w_val = st.selectbox("Width", widths if widths else ["0"])
-    with col2:
-        lengths = sorted(list(set([k.split('x')[1] for k in settings['prices'].keys() if 'x' in k])))
-        l_val = st.selectbox("Length", lengths if lengths else ["0"])
-    with col3:
-        speed = st.selectbox("Speed", ["Low", "High", "Low+High"])
+    if entry_type == "Machine":
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            widths = sorted(list(set([k.split('x')[0] for k in settings['prices'].keys() if 'x' in k])))
+            w_val = st.selectbox("Width", widths if widths else ["0"])
+        with col2:
+            lengths = sorted(list(set([k.split('x')[1] for k in settings['prices'].keys() if 'x' in k])))
+            l_val = st.selectbox("Length", lengths if lengths else ["0"])
+        with col3:
+            speed = st.selectbox("Speed", ["Low", "High", "Low+High"])
 
-    size = f"{w_val}x{l_val}"
-    
-    st.write("### Add-ons")
-    cols = st.columns(3)
-    selected_addons = []
-    addons_prices_struct = {} 
-    col_idx = 0
-    
-    if speed == "Low+High":
-        lh_price = settings['addons'].get("LowHighExtra", 0)
-        addons_prices_struct["Low+High Speed Extra"] = lh_price
-        st.warning(f"Note: Low+High speed adds extra Rs. {lh_price:,}/-")
+        size = f"{w_val}x{l_val}"
         
-    for addon_name in settings['addons']:
-        if addon_name in ["LowHighExtra", "PressureSwitch"]: continue
-        if cols[col_idx % 3].checkbox(addon_name):
-            selected_addons.append(addon_name)
-            addons_prices_struct[addon_name] = settings['addons'].get(addon_name, 0)
-        col_idx += 1
+        st.write("### Add-ons")
+        cols = st.columns(3)
+        selected_addons = []
+        addons_prices_struct = {} 
+        col_idx = 0
         
-    ps_qty = st.selectbox("Pressure Switch Qty:", [0, 1, 2])
-    if ps_qty > 0:
-        ps_unit_price = settings['addons'].get("PressureSwitch", 0)
-        ps_total_price = ps_qty * ps_unit_price
-        addons_prices_struct[f"Pressure Switch ({ps_qty} Qty)"] = ps_total_price
-        selected_addons.append(f"{ps_qty} Pressure Switch")
-
-    base_machine_price = int(settings['prices'].get(size, 0))
-    
-    if base_machine_price == 0:
-        st.error(f"Base price not found for size {size}. Please add it in Master Settings.")
-    else:
-        addons_total_price = sum(addons_prices_struct.values())
-        final_total_price = base_machine_price + addons_total_price
+        if speed == "Low+High":
+            lh_price = settings['addons'].get("LowHighExtra", 0)
+            addons_prices_struct["Low+High Speed Extra"] = lh_price
             
-        st.success(f"**Calculated Item Price: Rs. {final_total_price:,.2f}/-**")
+        for addon_name in settings['addons']:
+            if addon_name in ["LowHighExtra", "PressureSwitch"]: continue
+            if cols[col_idx % 3].checkbox(addon_name):
+                selected_addons.append(addon_name)
+                addons_prices_struct[addon_name] = settings['addons'].get(addon_name, 0)
+            col_idx += 1
+            
+        ps_qty = st.selectbox("Pressure Switch Qty:", [0, 1, 2])
+        if ps_qty > 0:
+            ps_unit_price = settings['addons'].get("PressureSwitch", 0)
+            ps_total_price = ps_qty * ps_unit_price
+            addons_prices_struct[f"Pressure Switch ({ps_qty} Qty)"] = ps_total_price
+            selected_addons.append(f"{ps_qty} Pressure Switch")
 
-        if st.button("➕ ADD TO PRICE LIST", type="primary"):
+        base_machine_price = int(settings['prices'].get(size, 0))
+        
+        if base_machine_price == 0:
+            st.error(f"Base price not found for size {size}. Please add it in Master Settings.")
+        else:
+            final_total_price = base_machine_price + sum(addons_prices_struct.values())
+            st.success(f"**Calculated Machine Price: Rs. {final_total_price:,.2f}/-**")
+
+            if st.button("➕ ADD MACHINE TO BILL", type="primary"):
+                if not party_name: st.warning("Please enter Party Name first!")
+                else:
+                    st.session_state.cart.append({
+                        "party": party_name, "size": size, "base_price": base_machine_price,
+                        "speed": speed, "addons_breakdown": addons_prices_struct, "total": final_total_price
+                    })
+                    dt = datetime.now().strftime("%d-%m-%Y")
+                    sheet.append_row([st.session_state.q_no, party_name, dt, size, speed, json.dumps(addons_prices_struct), final_total_price])
+                    st.toast("Machine Added! ✅")
+
+    else:
+        # SPARE PART LOGIC
+        st.write("### Add Spare Part Details")
+        c1, c2 = st.columns(2)
+        part_name = c1.text_input("Part Name / Description (e.g., Heater Coil, Motor Repair)")
+        part_price = c2.number_input("Final Price (Rs)", min_value=0, step=100)
+        
+        if st.button("➕ ADD PART TO BILL", type="primary"):
             if not party_name: st.warning("Please enter Party Name first!")
+            elif not part_name or part_price <= 0: st.warning("Please enter Part Name and Price!")
             else:
                 st.session_state.cart.append({
-                    "party": party_name, 
-                    "size": size, 
-                    "base_price": base_machine_price,
-                    "speed": speed,
-                    "addons_breakdown": addons_prices_struct,
-                    "total": final_total_price
+                    "party": party_name, "size": part_name, "base_price": 0,
+                    "speed": "Spare Part", "addons_breakdown": {}, "total": part_price
                 })
-                
                 dt = datetime.now().strftime("%d-%m-%Y")
-                sheet.append_row([st.session_state.q_no, party_name, dt, size, speed, json.dumps(addons_prices_struct), final_total_price])
-                st.toast("Item Added to Google Sheet! ✅")
+                sheet.append_row([st.session_state.q_no, party_name, dt, part_name, "Spare Part", "{}", part_price])
+                st.toast(f"{part_name} Added! ✅")
 
     if st.session_state.cart:
         st.write("---")
@@ -330,11 +312,11 @@ if menu == "➕ New Quotation Session":
         
         cart_display_list = []
         for c_item in st.session_state.cart:
-            addons_list_str = ", ".join(c_item['addons_breakdown'].keys())
+            addons_list_str = ", ".join(c_item['addons_breakdown'].keys()) if c_item['addons_breakdown'] else "-"
             cart_display_list.append({
                 "Party Name": c_item['party'],
-                "Size": format_size(c_item['size']),
-                "Speed": c_item['speed'],
+                "Item / Size": format_size(c_item['size']),
+                "Type/Speed": c_item['speed'],
                 "Addons": addons_list_str,
                 "Price": f"{int(c_item['total']):,.2f}"
             })
@@ -345,11 +327,10 @@ if menu == "➕ New Quotation Session":
         
         colA, colB = st.columns(2)
         with colA:
-            st.download_button("📄 DOWNLOAD QUOTATION PDF (Detailed)", data=pdf_buffer, file_name=f"Quotation_{party_name.replace(' ','_')}_{datetime.now().strftime('%d-%m-%Y')}.pdf", mime="application/pdf")
+            st.download_button("📄 DOWNLOAD BILL PDF", data=pdf_buffer, file_name=f"Bill_{party_name.replace(' ','_')}_{datetime.now().strftime('%d-%m-%Y')}.pdf", mime="application/pdf")
         with colB:
             if st.button("Clear List (Start New Session)"):
                 st.session_state.cart = []; st.session_state.q_no = f"SUR/{datetime.now().year}/{datetime.now().strftime('%m%d%H%M')}"; st.rerun()
-
 
 # ==========================================
 # 2. PARTY HISTORY PAGE 
@@ -358,53 +339,44 @@ elif menu == "📜 Party History & Search":
     st.title("Party Search History")
     
     data = sheet.get_all_records()
-    if not data:
-        st.info("No records found in Google Sheet. Please add some items first.")
+    if not data: st.info("No records found in Google Sheet.")
     else:
         df = pd.DataFrame(data)
-        
         df['Clean_Party'] = df['Party'].astype(str).str.strip().str.title()
         df['DateObj'] = pd.to_datetime(df['Date'], format="%d-%m-%Y", errors='coerce')
         df['Year'] = df['DateObj'].dt.year
         df['MonthNum'] = df['DateObj'].dt.month
         df = df.sort_values(by='DateObj')
         
-        search_party = st.text_input("🔍 Type here to search Table (Party Name or Q_No):", placeholder="Live filter...")
+        search_party = st.text_input("🔍 Search by Party Name or Q_No:", placeholder="Live filter...")
         
         if search_party:
             mask = df['Party'].astype(str).str.contains(search_party, case=False, na=False) | \
                    df['Q_No'].astype(str).str.contains(search_party, case=False, na=False)
             filtered_df = df[mask]
-        else:
-            filtered_df = df.tail(100)
+        else: filtered_df = df.tail(100)
             
         st.dataframe(filtered_df.drop(columns=['Clean_Party', 'DateObj', 'Year', 'MonthNum'], errors='ignore'), use_container_width=True)
         st.write("---")
         
         col1, col2, col3 = st.columns(3)
-        
         unique_parties = sorted(df['Clean_Party'].unique().tolist())
         unique_qnos = sorted(df['Q_No'].astype(str).unique().tolist(), reverse=True)
         
         with col1:
             st.write("### 📜 Party Statement PDF")
             pdf_party = st.selectbox("Select Party:", ["-- Select Party --"] + unique_parties)
-            
             if pdf_party != "-- Select Party --":
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
-                
                 years = sorted(party_df['Year'].dropna().unique().astype(int).tolist(), reverse=True)
                 selected_year = st.selectbox("Select Year:", ["All Time"] + years)
-                
                 period_str = "Lifetime"
                 
                 if selected_year != "All Time":
                     party_df = party_df[party_df['Year'] == selected_year]
                     period_str = f"Year {selected_year}"
-                    
                     months_present = sorted(party_df['MonthNum'].dropna().unique().astype(int).tolist())
                     month_names_dict = {m: calendar.month_name[m] for m in months_present}
-                    
                     selected_month = st.selectbox("Select Month:", ["All Months"] + list(month_names_dict.values()))
                     
                     if selected_month != "All Months":
@@ -412,18 +384,16 @@ elif menu == "📜 Party History & Search":
                         party_df = party_df[party_df['MonthNum'] == month_num]
                         period_str = f"{selected_month} {selected_year}"
 
-                if st.button(f"Generate Detailed {period_str} PDF"):
+                if st.button(f"Generate PDF History"):
                     if not party_df.empty:
                         hist_pdf = create_history_pdf(pdf_party, party_df, period_str)
-                        st.download_button("📥 Download Statement", data=hist_pdf, file_name=f"Statement_{pdf_party.replace(' ','_')}_{period_str.replace(' ','_')}.pdf", mime="application/pdf")
-                    else:
-                        st.warning("No records found for this period.")
+                        st.download_button("📥 Download Statement", data=hist_pdf, file_name=f"Statement_{pdf_party.replace(' ','_')}.pdf", mime="application/pdf")
+                    else: st.warning("No records found.")
 
         with col2:
             st.write("### 📄 Reprint Old Bill")
             reprint_qno = st.selectbox("Select Q_No to Reprint:", ["-- Select Q_No --"] + unique_qnos)
-            
-            if st.button("Generate Detailed Bill PDF"):
+            if st.button("Generate Bill PDF"):
                 if reprint_qno != "-- Select Q_No --":
                     bill_df = df[df['Q_No'].astype(str) == reprint_qno]
                     if not bill_df.empty:
@@ -433,20 +403,17 @@ elif menu == "📜 Party History & Search":
                         reprint_items_struct = []
                         for _, r in bill_df.iterrows():
                             size_n = str(r['Size'])
-                            base_p_calc = int(settings['prices'].get(size_n, 0))
+                            speed_n = str(r['Speed'])
+                            base_p_calc = 0 if speed_n == "Spare Part" else int(settings['prices'].get(size_n, 0))
                             
                             reprint_items_struct.append({
-                                "size": size_n, 
-                                "base_price": base_p_calc,
-                                "speed": r['Speed'],
-                                "addons_breakdown": r['Options'], 
-                                "total": r['Total_Price']
+                                "size": size_n, "base_price": base_p_calc,
+                                "speed": speed_n, "addons_breakdown": r['Options'], "total": r['Total_Price']
                             })
                         
                         detailed_bill_pdf = create_bill_pdf(party_n, reprint_qno, reprint_items_struct, str(date_n))
-                        st.download_button("📥 Download Bill PDF", data=detailed_bill_pdf, file_name=f"Reprint_{reprint_qno.replace('/','_')}.pdf", mime="application/pdf")
-                else:
-                    st.warning("Please select a Q_No from the list.")
+                        st.download_button("📥 Download Old Bill", data=detailed_bill_pdf, file_name=f"Reprint_{reprint_qno.replace('/','_')}.pdf", mime="application/pdf")
+                else: st.warning("Please select a Q_No.")
 
         with col3:
             st.write("### ❌ Delete Record")
@@ -458,114 +425,73 @@ elif menu == "📜 Party History & Search":
                         sheet.delete_rows(cell.row)
                         st.success(f"Record {del_qno} deleted successfully!")
                         st.rerun()
-                    except:
-                        st.error("Q_No not found in Sheet.")
-                else:
-                    st.warning("Please select a Q_No to delete.")
-
+                    except: st.error("Q_No not found in Sheet.")
+                else: st.warning("Please select a Q_No.")
 
 # ==========================================
 # 3. MASTER SETTINGS PAGE
 # ==========================================
 elif menu == "⚙️ Master Settings":
     st.title("Master Settings 🔒")
-    
-    pwd_input = st.text_input("Enter Master Password to Access Settings:", type="password")
+    pwd_input = st.text_input("Enter Master Password:", type="password")
     
     if pwd_input != settings.get('password', '1234'):
-        if pwd_input:
-            st.error("❌ Incorrect Password!")
+        if pwd_input: st.error("❌ Incorrect Password!")
         st.stop()
         
     st.success("Access Granted!")
-    st.info("Changes made here will be saved permanently.")
-    
     tab1, tab2, tab3 = st.tabs(["Machine Prices", "Add-ons", "Security & T&C"])
     
     with tab1:
-        st.subheader("Edit or Remove Current Sizes")
+        st.subheader("Edit/Remove Sizes")
         prices = settings['prices']
-        
         for size, price in list(prices.items()):
-            colA, colB, colC = st.columns([2, 2, 1])
-            with colA:
-                st.write(f"**{format_size(size)}**")
-            with colB:
-                new_val = st.number_input(f"Price for {size}", value=price, step=1000, key=f"p_{size}", label_visibility="collapsed")
-                prices[size] = new_val
-            with colC:
-                if st.button("❌ Remove", key=f"del_size_{size}"):
-                    del prices[size]
-                    save_settings(settings)
-                    st.rerun()
+            cA, cB, cC = st.columns([2, 2, 1])
+            cA.write(f"**{format_size(size)}**")
+            prices[size] = cB.number_input("Price", value=price, step=1000, key=f"p_{size}", label_visibility="collapsed")
+            if cC.button("❌ Remove", key=f"d_{size}"):
+                del prices[size]; save_settings(settings); st.rerun()
                     
         st.write("---")
-        st.subheader("Add New Machine Size")
-        colA, colB, colC = st.columns(3)
-        n_w = colA.text_input("Width (e.g. 24)")
-        n_l = colB.text_input("Length (e.g. 48)")
-        n_p = colC.number_input("Base Price", value=0, step=1000)
-        
+        c1, c2, c3 = st.columns(3)
+        n_w = c1.text_input("Width (e.g. 24)")
+        n_l = c2.text_input("Length (e.g. 48)")
+        n_p = c3.number_input("Base Price", value=0, step=1000)
         if st.button("➕ Add New Size"):
             if n_w and n_l and n_p > 0:
                 settings['prices'][f"{n_w}x{n_l}"] = n_p
-                save_settings(settings)
-                st.success("New Size Added permanently!")
-                st.rerun()
-            else:
-                st.error("Please fill all fields with valid data.")
+                save_settings(settings); st.rerun()
 
     with tab2:
-        st.subheader("Edit or Remove Current Add-ons")
+        st.subheader("Edit/Remove Add-ons")
         addons = settings['addons']
-        
         for name, price in list(addons.items()):
             if name in ["LowHighExtra", "PressureSwitch"]:
-                colA, colB = st.columns([2, 3])
-                disp_n = "Speed (Low+High Extra)" if name == "LowHighExtra" else "Pressure Switch (Unit Price)"
-                colA.write(f"**{disp_n}**")
-                addons[name] = colB.number_input(f"Price for {name}", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
+                cA, cB = st.columns([2, 3])
+                cA.write(f"**{name}**")
+                addons[name] = cB.number_input("Price", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
             else:
-                colA, colB, colC = st.columns([2, 2, 1])
-                with colA:
-                    st.write(f"**{name}**")
-                with colB:
-                    addons[name] = st.number_input(f"Price for {name}", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
-                with colC:
-                    if st.button("❌ Remove", key=f"del_addon_{name}"):
-                        del addons[name]
-                        save_settings(settings)
-                        st.rerun()
+                cA, cB, cC = st.columns([2, 2, 1])
+                cA.write(f"**{name}**")
+                addons[name] = cB.number_input("Price", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
+                if cC.button("❌ Remove", key=f"da_{name}"):
+                    del addons[name]; save_settings(settings); st.rerun()
                         
-        if st.button("💾 Save Add-on Price Changes", type="primary"):
-            save_settings(settings)
-            st.success("Add-on Prices Updated permanently!")
-            
+        if st.button("💾 Save Add-on Changes", type="primary"): save_settings(settings); st.success("Updated!")
         st.write("---")
-        st.subheader("Add New Add-on Option")
         c1, c2 = st.columns(2)
-        new_addon_name = c1.text_input("New Add-on Name")
-        new_addon_price = c2.number_input("Add-on Price", value=0, step=500)
-        if st.button("➕ Add New Option permanently"):
-            if new_addon_name and new_addon_price > 0:
-                settings['addons'][new_addon_name] = new_addon_price
-                save_settings(settings)
-                st.success(f"{new_addon_name} added permanently!")
-                st.rerun()
+        new_a = c1.text_input("New Add-on Name")
+        new_p = c2.number_input("Add-on Price", value=0, step=500)
+        if st.button("➕ Add New Option"):
+            if new_a and new_p > 0:
+                settings['addons'][new_a] = new_p
+                save_settings(settings); st.rerun()
 
     with tab3:
-        st.subheader("Change Master Password")
-        new_pwd = st.text_input("New Master Password:", type="password")
-        if st.button("Update Password permanently"):
-            if new_pwd:
-                settings['password'] = new_pwd
-                save_settings(settings)
-                st.success("Master Password Updated permanently!")
-                
+        new_pwd = st.text_input("New Password:", type="password")
+        if st.button("Update Password"):
+            if new_pwd: settings['password'] = new_pwd; save_settings(settings); st.success("Updated!")
         st.write("---")
-        st.subheader("Edit Terms & Conditions for PDF")
-        new_tc = st.text_area("T&C text appearing in footer", value=settings.get('tc', ''), height=100)
-        if st.button("Update T&C permanently"):
-            settings['tc'] = new_tc
-            save_settings(settings)
-            st.success("T&C text Updated permanently!")
+        new_tc = st.text_area("T&C text", value=settings.get('tc', ''), height=100)
+        if st.button("Update T&C"):
+            settings['tc'] = new_tc; save_settings(settings); st.success("Updated!")
