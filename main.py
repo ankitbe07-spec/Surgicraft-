@@ -8,7 +8,6 @@ import pandas as pd
 import io
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import inch
 
 st.set_page_config(page_title="Surgicraft App", layout="wide")
 
@@ -55,12 +54,19 @@ def get_sheet():
     client = gspread.authorize(creds)
     return client.open("Surgicraft_Database").sheet1
 
-# --- PDF GENERATORS (New Detailed Structure) ---
+# --- HELPER FORMAT FUNCTION (Inch formatting) ---
+def format_size(size_str):
+    if "x" in size_str:
+        parts = size_str.split('x')
+        if len(parts) == 2:
+            return f'{parts[0].strip()}" x {parts[1].strip()}"'
+    return size_str
+
+# --- PDF GENERATORS ---
 def create_bill_pdf(party, q_no, items_data, date_str):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     
-    # Header with Logo
     text_start_x = 50
     if os.path.exists(LOGO_PATH):
         try:
@@ -72,52 +78,63 @@ def create_bill_pdf(party, q_no, items_data, date_str):
     c.setFont("Helvetica", 10); c.drawString(text_start_x, 765, "Manufacturers of Hospital Equipment | Since 1985")
     c.line(50, 730, 550, 730)
     
-    # Party/Date Details
     c.setFont("Helvetica-Bold", 12)
     c.drawString(50, 700, f"Quotation No: {q_no}"); c.drawString(400, 700, f"Date: {date_str}")
     c.drawString(50, 680, f"Party Name: {party}")
     
-    # Table Headers
     y = 650; c.setFont("Helvetica-Bold", 11)
     c.drawString(50, y, "Sr."); c.drawString(90, y, "Description"); c.drawString(460, y, "Amount (Rs)")
     c.line(50, y-5, 550, y-5)
     
     y -= 25; c.setFont("Helvetica", 11); grand_total = 0
     
-    # Detailed loop for each cart item
     for i, item in enumerate(items_data, 1):
-        # 1. Base Machine Size Price
-        base_size = item.get('size', 'Unknown Size')
+        # Format Size with Inch symbol
+        base_size = format_size(item.get('size', 'Unknown Size'))
         base_price = int(item.get('base_price', 0))
+        
         c.drawString(50, y, str(i)); c.setFont("Helvetica-Bold", 11); c.drawString(90, y, f"Machine Size: {base_size}"); c.setFont("Helvetica", 11);
         if base_price > 0: c.drawString(460, y, f"{base_price:,.2f}")
         grand_total += base_price; y -= 18
         
-        # 2. Speed Extra
         speed = item.get('speed', 'Low')
-        speed_extra = int(item.get('speed_extra', 0))
         c.setFont("Helvetica-Oblique", 11); c.drawString(100, y, f"  • Speed: {speed}"); c.setFont("Helvetica", 11);
-        if speed_extra > 0: c.drawString(460, y, f"{speed_extra:,.2f}")
-        grand_total += speed_extra; y -= 18
+        y -= 18
         
-        # 3. Individual Addons
-        addons_dict = item.get('addons_breakdown', {})
-        for name, price in addons_dict.items():
-            price_val = int(price)
-            if price_val > 0:
-                c.drawString(100, y, f"  • Addon: {name}"); c.drawString(460, y, f"{price_val:,.2f}")
-                grand_total += price_val; y -= 18
+        # SMART FIX FOR OLD DATA FORMATS (The AttributeError fix)
+        raw_addons = item.get('addons_breakdown', {})
+        addons_dict = {}
+        
+        if isinstance(raw_addons, str):
+            try:
+                parsed = json.loads(raw_addons)
+                if isinstance(parsed, dict): addons_dict = parsed
+                elif isinstance(parsed, list): addons_dict = {addon: 0 for addon in parsed}
+            except:
+                addons_dict = {raw_addons: 0}
+        elif isinstance(raw_addons, list):
+            addons_dict = {addon: 0 for addon in raw_addons}
+        elif isinstance(raw_addons, dict):
+            addons_dict = raw_addons
             
-        y -= 10 # Extra space between items
-        
-        # Simple Page break if y gets too low
+        for name, price in addons_dict.items():
+            price_val = int(price) if price else 0
+            c.drawString(100, y, f"  • Addon: {name}")
+            if price_val > 0: 
+                c.drawString(460, y, f"{price_val:,.2f}")
+                grand_total += price_val
+            y -= 18
+            
+        y -= 10
         if y < 150:
-            c.showPage()
-            y = 750; c.setFont("Helvetica", 11)
+            c.showPage(); y = 750; c.setFont("Helvetica", 11)
             c.drawString(50, y, "Sr."); c.drawString(90, y, "Description"); c.drawString(460, y, "Amount (Rs)")
             c.line(50, y-5, 550, y-5); y -= 25
 
-    # Footer
+    # Check if total match (fallback for old bills where breakdown price wasn't saved)
+    if grand_total == 0 and item.get('total'):
+        grand_total = int(item.get('total'))
+
     c.line(50, y-5, 550, y-5)
     c.setFont("Helvetica-Bold", 12); c.drawString(50, y-25, f"GRAND TOTAL VALUE: Rs. {grand_total:,.2f}/-")
     c.setFont("Helvetica-Oblique", 9); c.drawString(50, 50, settings['tc'])
@@ -129,7 +146,6 @@ def create_history_pdf(party, records_df):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     
-    # Header with Logo
     text_start_x = 40
     if os.path.exists(LOGO_PATH):
         try:
@@ -141,21 +157,21 @@ def create_history_pdf(party, records_df):
     c.setFont("Helvetica", 12); c.drawString(text_start_x, 765, "Customer Account History Statement")
     c.line(40, 740, 550, 740)
     
-    # Statement Details
     c.setFont("Helvetica-Bold", 12)
     c.drawString(40, 710, f"Party Name: {party}"); c.drawString(400, 710, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
-    # Table Headers - Adjusted x-coordinates for better spacing
     y = 670; c.setFont("Helvetica-Bold", 11)
     c.drawString(40, y, "Date"); c.drawString(110, y, "Q.No"); c.drawString(280, y, "Size"); c.drawString(480, y, "Amount (Rs)")
     c.line(40, y-5, 550, y-5)
     
     y -= 25; c.setFont("Helvetica", 11); grand_total = 0
-    # Sorting by date might be needed if not tailoredtail
-    records_df = records_df.tail(100) # Only last 100 for safety
+    records_df = records_df.tail(100)
     
     for index, row in records_df.iterrows():
-        c.drawString(40, y, str(row['Date'])); c.drawString(110, y, str(row['Q_No'])); c.drawString(280, y, str(row['Size']))
+        # Format Size with Inch symbol
+        disp_size = format_size(str(row['Size']))
+        
+        c.drawString(40, y, str(row['Date'])); c.drawString(110, y, str(row['Q_No'])); c.drawString(280, y, disp_size)
         
         try: 
             amt = int(row['Total_Price'])
@@ -165,7 +181,6 @@ def create_history_pdf(party, records_df):
             c.drawString(480, y, "0.00")
             
         y -= 20
-        # Page break if y gets too low
         if y < 100:
             c.showPage(); y = 750; c.setFont("Helvetica", 11)
             c.drawString(40, y, "Date"); c.drawString(110, y, "Q.No"); c.drawString(280, y, "Size"); c.drawString(480, y, "Amount (Rs)")
@@ -179,25 +194,23 @@ def create_history_pdf(party, records_df):
 
 
 # --- SIDEBAR MENU ---
-# Changed menu text slightly for clarity based on user request to remove "Create New Quotation"
 st.sidebar.title("🏥 Surgicraft Menu")
 menu = st.sidebar.radio("Go to:", ["➕ New Quotation Session", "📜 Party History & Search", "⚙️ Master Settings"])
 
 try:
     sheet = get_sheet()
 except Exception as e:
-    st.error(f"Google Sheet Connection Error! Please check sheet setup and secrets. Error: {e}")
+    st.error(f"Google Sheet Connection Error! Error: {e}")
     st.stop()
 
 
 # ==========================================
-# 1. CREATE QUOTATION PAGE (UPDATED HEADERS/DETAIL)
+# 1. CREATE QUOTATION PAGE
 # ==========================================
 if menu == "➕ New Quotation Session":
-    st.title("Surgicraft Industries") # Updated Page Title
-    st.caption("Created by Ankit Mistry") # Updated Caption Below Title
+    st.title("Surgicraft Industries") 
+    st.caption("Created by Ankit Mistry") 
     
-    # Display Logo in UI if available
     if os.path.exists(LOGO_PATH):
         st.image(LOGO_PATH, width=150)
     st.write("---")
@@ -219,16 +232,14 @@ if menu == "➕ New Quotation Session":
     st.write("### Add-ons")
     cols = st.columns(3)
     selected_addons = []
-    addons_prices_struct = {} # For PDF Breakdown
+    addons_prices_struct = {} 
     col_idx = 0
     
-    # 1. Low+High extra (System Addon)
     if speed == "Low+High":
         lh_price = settings['addons'].get("LowHighExtra", 0)
         addons_prices_struct["Low+High Speed Extra"] = lh_price
         st.warning(f"Note: Low+High speed adds extra Rs. {lh_price:,}/-")
         
-    # 2. General Checkbox Addons
     for addon_name in settings['addons']:
         if addon_name in ["LowHighExtra", "PressureSwitch"]: continue
         if cols[col_idx % 3].checkbox(addon_name):
@@ -236,7 +247,6 @@ if menu == "➕ New Quotation Session":
             addons_prices_struct[addon_name] = settings['addons'].get(addon_name, 0)
         col_idx += 1
         
-    # 3. Pressure Switch Qty
     ps_qty = st.selectbox("Pressure Switch Qty:", [0, 1, 2])
     if ps_qty > 0:
         ps_unit_price = settings['addons'].get("PressureSwitch", 0)
@@ -244,13 +254,11 @@ if menu == "➕ New Quotation Session":
         addons_prices_struct[f"Pressure Switch ({ps_qty} Qty)"] = ps_total_price
         selected_addons.append(f"{ps_qty} Pressure Switch")
 
-    # Price Calc
     base_machine_price = int(settings['prices'].get(size, 0))
     
     if base_machine_price == 0:
         st.error(f"Base price not found for size {size}. Please add it in Master Settings.")
     else:
-        # Total addons sum
         addons_total_price = sum(addons_prices_struct.values())
         final_total_price = base_machine_price + addons_total_price
             
@@ -259,21 +267,16 @@ if menu == "➕ New Quotation Session":
         if st.button("➕ ADD TO PRICE LIST", type="primary"):
             if not party_name: st.warning("Please enter Party Name first!")
             else:
-                # Appending detailed structure so it shows breakdown in PDF Session
                 st.session_state.cart.append({
                     "party": party_name, 
                     "size": size, 
                     "base_price": base_machine_price,
                     "speed": speed,
-                    # Speed Extra isn't separated in calc logic above but needed for detailed PDF, extract if needed or just use addons list
                     "addons_breakdown": addons_prices_struct,
                     "total": final_total_price
                 })
                 
                 dt = datetime.now().strftime("%d-%m-%Y")
-                
-                # Sheet structure check is in next step if error KeyError:Party
-                # Save SUMMARY to sheet for search, detailed structure in sessioon session_state.cart for session PDF
                 sheet.append_row([st.session_state.q_no, party_name, dt, size, speed, json.dumps(addons_prices_struct), final_total_price])
                 st.toast("Item Added to Google Sheet! ✅")
 
@@ -281,13 +284,12 @@ if menu == "➕ New Quotation Session":
         st.write("---")
         st.subheader("Current Session Items")
         
-        # Display simplified cart in UI, breakdown in PDF
         cart_display_list = []
         for c_item in st.session_state.cart:
             addons_list_str = ", ".join(c_item['addons_breakdown'].keys())
             cart_display_list.append({
                 "Party Name": c_item['party'],
-                "Size": c_item['size'],
+                "Size": format_size(c_item['size']),
                 "Speed": c_item['speed'],
                 "Addons": addons_list_str,
                 "Price": f"{int(c_item['total']):,.2f}"
@@ -295,19 +297,18 @@ if menu == "➕ New Quotation Session":
             
         st.dataframe(pd.DataFrame(cart_display_list), use_container_width=True)
         
-        # Generate Detailed PDF from structured sesssion cart
         pdf_buffer = create_bill_pdf(party_name, st.session_state.q_no, st.session_state.cart, datetime.now().strftime("%d-%m-%Y"))
         
         colA, colB = st.columns(2)
         with colA:
-            st.download_button("📄 DOWNLOAD QUOTATION PDF (Detailed)", data=pdf_buffer, file_name=f"Quotation_{party_name.replace(' ','_')}_{dt}.pdf", mime="application/pdf")
+            st.download_button("📄 DOWNLOAD QUOTATION PDF (Detailed)", data=pdf_buffer, file_name=f"Quotation_{party_name.replace(' ','_')}_{datetime.now().strftime('%d-%m-%Y')}.pdf", mime="application/pdf")
         with colB:
             if st.button("Clear List (Start New Session)"):
                 st.session_state.cart = []; st.session_state.q_no = f"SUR/{datetime.now().year}/{datetime.now().strftime('%m%d%H%M')}"; st.rerun()
 
 
 # ==========================================
-# 2. PARTY HISTORY PAGE (OVERLAPPING FIX, REPRINT DETAIL)
+# 2. PARTY HISTORY PAGE (DROPDOWNS ADDED)
 # ==========================================
 elif menu == "📜 Party History & Search":
     st.title("Party Search History")
@@ -316,11 +317,9 @@ elif menu == "📜 Party History & Search":
     if not data:
         st.info("No records found in Google Sheet. Please add some items first.")
     else:
-        # Load date data properly to handle non-header sheet
         df = pd.DataFrame(data)
         
-        # Advance Search Box (checks Party or Q_No)
-        search_party = st.text_input("🔍 Search Party Name or Q_No:", placeholder="Type name or Q_No to filter...")
+        search_party = st.text_input("🔍 Type here to search Table (Party Name or Q_No):", placeholder="Live filter...")
         
         if search_party:
             mask = df['Party'].astype(str).str.contains(search_party, case=False, na=False) | \
@@ -334,82 +333,76 @@ elif menu == "📜 Party History & Search":
         
         col1, col2, col3 = st.columns(3)
         
+        # Get Unique lists for Dropdowns
+        unique_parties = df['Party'].astype(str).unique().tolist()
+        unique_qnos = df['Q_No'].astype(str).unique().tolist()
+        
         with col1:
             st.write("### 📜 Party History PDF")
-            pdf_party = st.text_input("Enter Party Name for History Statement:")
+            # Dropdown replacing text input
+            pdf_party = st.selectbox("Select Party for History Statement:", ["-- Select Party --"] + unique_parties)
+            
             if st.button("Generate Statement PDF"):
-                if pdf_party:
-                    # Case insensitive exact match for history statement
-                    party_df = df[df['Party'].astype(str).str.lower() == pdf_party.lower()]
+                if pdf_party != "-- Select Party --":
+                    party_df = df[df['Party'].astype(str) == pdf_party]
                     if not party_df.empty:
-                        # history statement layout already fixed for overlapping
                         hist_pdf = create_history_pdf(pdf_party, party_df)
                         st.download_button("📥 Download History PDF", data=hist_pdf, file_name=f"Statement_{pdf_party.replace(' ','_')}.pdf", mime="application/pdf")
-                    else:
-                        st.warning("No records found for this exact party name.")
                 else:
-                    st.warning("Please enter a party name.")
+                    st.warning("Please select a party name from the list.")
 
         with col2:
             st.write("### 📄 Reprint Old Bill")
-            reprint_qno = st.text_input("Enter Q_No to Reprint Bill:")
+            # Dropdown replacing text input
+            reprint_qno = st.selectbox("Select Q_No to Reprint:", ["-- Select Q_No --"] + unique_qnos)
+            
             if st.button("Generate Detailed Bill PDF"):
-                if reprint_qno:
-                    # Match exact Q_No
+                if reprint_qno != "-- Select Q_No --":
                     bill_df = df[df['Q_No'].astype(str) == reprint_qno]
                     if not bill_df.empty:
-                        # Extract details needed for create_bill_pdf detailed format
                         party_n = bill_df.iloc[0]['Party']
                         date_n = bill_df.iloc[0]['Date']
                         
-                        # Convert database summary rows to structured items for detailed PDF
-                        # We stored JSON breakdown in 'Options' column instead of list
                         reprint_items_struct = []
                         for _, r in bill_df.iterrows():
-                            size_n = r['Size']
+                            size_n = str(r['Size'])
                             base_p_calc = int(settings['prices'].get(size_n, 0))
                             
-                            try:
-                                addons_json_breakdown = json.loads(r['Options'])
-                            except:
-                                addons_json_breakdown = {"Warning": "Detailed breakdown not saved for this record."}
-                                
                             reprint_items_struct.append({
                                 "size": size_n, 
                                 "base_price": base_p_calc,
                                 "speed": r['Speed'],
-                                "addons_breakdown": addons_json_breakdown,
+                                "addons_breakdown": r['Options'], # The helper function handles parsing now
                                 "total": r['Total_Price']
                             })
                         
                         detailed_bill_pdf = create_bill_pdf(party_n, reprint_qno, reprint_items_struct, str(date_n))
-                        st.download_button("📥 Download Detailed Bill PDF", data=detailed_bill_pdf, file_name=f"Reprint_{reprint_qno.replace('/','_')}.pdf", mime="application/pdf")
-                    else:
-                        st.warning("Q_No not found.")
+                        st.download_button("📥 Download Bill PDF", data=detailed_bill_pdf, file_name=f"Reprint_{reprint_qno.replace('/','_')}.pdf", mime="application/pdf")
+                else:
+                    st.warning("Please select a Q_No from the list.")
 
         with col3:
             st.write("### ❌ Delete Record")
-            st.caption("Warning: Permenant delete using exact Q_No")
-            del_qno = st.text_input("Enter exact Q_No to Delete:")
+            del_qno = st.selectbox("Select Q_No to Delete:", ["-- Select Q_No --"] + unique_qnos)
             if st.button("Delete from Sheet", type="primary"):
-                if del_qno:
+                if del_qno != "-- Select Q_No --":
                     try:
-                        # find exact cell based on Q_No
                         cell = sheet.find(del_qno)
                         sheet.delete_rows(cell.row)
                         st.success(f"Record {del_qno} deleted successfully!")
                         st.rerun()
                     except:
                         st.error("Q_No not found in Sheet.")
+                else:
+                    st.warning("Please select a Q_No to delete.")
 
 
 # ==========================================
-# 3. MASTER SETTINGS PAGE (NO CHANGE, INCLUDES PASSWORD)
+# 3. MASTER SETTINGS PAGE
 # ==========================================
 elif menu == "⚙️ Master Settings":
     st.title("Master Settings 🔒")
     
-    # Password Protection
     pwd_input = st.text_input("Enter Master Password to Access Settings:", type="password")
     
     if pwd_input != settings.get('password', '1234'):
@@ -426,11 +419,10 @@ elif menu == "⚙️ Master Settings":
         st.subheader("Edit or Remove Current Sizes")
         prices = settings['prices']
         
-        # Iterate over copy to allow removal
         for size, price in list(prices.items()):
             colA, colB, colC = st.columns([2, 2, 1])
             with colA:
-                st.write(f"**{size}**")
+                st.write(f"**{format_size(size)}**")
             with colB:
                 new_val = st.number_input(f"Price for {size}", value=price, step=1000, key=f"p_{size}", label_visibility="collapsed")
                 prices[size] = new_val
@@ -438,7 +430,6 @@ elif menu == "⚙️ Master Settings":
                 if st.button("❌ Remove", key=f"del_size_{size}"):
                     del prices[size]
                     save_settings(settings)
-                    st.toast(f"{size} Removed permanently.")
                     st.rerun()
                     
         st.write("---")
@@ -462,7 +453,6 @@ elif menu == "⚙️ Master Settings":
         addons = settings['addons']
         
         for name, price in list(addons.items()):
-            # Separate handling for special addons
             if name in ["LowHighExtra", "PressureSwitch"]:
                 colA, colB = st.columns([2, 3])
                 disp_n = "Speed (Low+High Extra)" if name == "LowHighExtra" else "Pressure Switch (Unit Price)"
@@ -478,7 +468,6 @@ elif menu == "⚙️ Master Settings":
                     if st.button("❌ Remove", key=f"del_addon_{name}"):
                         del addons[name]
                         save_settings(settings)
-                        st.toast(f"{name} Removed permanently.")
                         st.rerun()
                         
         if st.button("💾 Save Add-on Price Changes", type="primary"):
@@ -488,7 +477,7 @@ elif menu == "⚙️ Master Settings":
         st.write("---")
         st.subheader("Add New Add-on Option")
         c1, c2 = st.columns(2)
-        new_addon_name = c1.text_input("New Add-on Name (e.g. Panel board)")
+        new_addon_name = c1.text_input("New Add-on Name")
         new_addon_price = c2.number_input("Add-on Price", value=0, step=500)
         if st.button("➕ Add New Option permanently"):
             if new_addon_name and new_addon_price > 0:
@@ -496,8 +485,6 @@ elif menu == "⚙️ Master Settings":
                 save_settings(settings)
                 st.success(f"{new_addon_name} added permanently!")
                 st.rerun()
-            else:
-                st.error("Please enter valid addon name and price.")
 
     with tab3:
         st.subheader("Change Master Password")
@@ -507,8 +494,6 @@ elif menu == "⚙️ Master Settings":
                 settings['password'] = new_pwd
                 save_settings(settings)
                 st.success("Master Password Updated permanently!")
-            else:
-                st.warning("Password cannot be empty.")
                 
         st.write("---")
         st.subheader("Edit Terms & Conditions for PDF")
