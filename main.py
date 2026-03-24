@@ -152,54 +152,82 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
         except: pass
     
     c.setFont("Helvetica-Bold", 20); c.drawString(text_start_x, 780, "SURGICRAFT INDUSTRIES")
-    c.setFont("Helvetica", 12); c.drawString(text_start_x, 765, f"{period_str} Account History Statement")
+    c.setFont("Helvetica", 12); c.drawString(text_start_x, 765, f"{period_str} Account Statement (Detailed)")
     c.line(40, 740, 550, 740)
     
     c.setFont("Helvetica-Bold", 12)
     c.drawString(40, 710, f"Party Name: {party}"); c.drawString(400, 710, f"Date generated: {datetime.now().strftime('%d-%m-%Y')}")
     
-    y = 670; c.setFont("Helvetica-Bold", 10)
-    c.drawString(40, y, "Date"); c.drawString(100, y, "Q.No"); c.drawString(170, y, "Machine Details (Size + Addons)"); c.drawString(480, y, "Amount (Rs)")
+    # Removed Q.No, given more space to Description
+    y = 670; c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, y, "Date"); c.drawString(100, y, "Description / Details"); c.drawString(460, y, "Amount (Rs)")
     c.line(40, y-5, 550, y-5)
     
-    y -= 25; c.setFont("Helvetica", 10); grand_total = 0
+    y -= 25; c.setFont("Helvetica", 11); grand_total = 0
     
+    try:
+        records_df['DateObj'] = pd.to_datetime(records_df['Date'], format="%d-%m-%Y", errors='coerce')
+        records_df = records_df.sort_values('DateObj')
+    except:
+        pass
+
     for index, row in records_df.iterrows():
-        disp_size = format_size(str(row['Size']))
+        date_str = str(row['Date'])
+        size_str = format_size(str(row['Size']))
+        speed_str = str(row['Speed'])
+        total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
         
-        raw_addons = str(row.get('Options', '{}'))
-        addons_str = ""
-        if raw_addons and raw_addons != "{}":
+        # Base Price
+        base_price = int(settings['prices'].get(str(row['Size']), 0))
+        
+        # Addons Dictionary
+        raw_addons = row.get('Options', '{}')
+        addons_dict = {}
+        if isinstance(raw_addons, str):
             try:
                 parsed = json.loads(raw_addons)
-                if isinstance(parsed, dict):
-                    addons_list = [k for k, v in parsed.items() if int(v) > 0]
-                    addons_str = ", ".join(addons_list)
-                elif isinstance(parsed, list):
-                    addons_str = ", ".join(parsed)
+                if isinstance(parsed, dict): addons_dict = parsed
+                elif isinstance(parsed, list): addons_dict = {addon: 0 for addon in parsed}
             except:
-                addons_str = raw_addons
-                
-        detail_text = f"{disp_size}"
-        if addons_str and addons_str != "{}":
-            detail_text += f" | {addons_str}"
-            
-        if len(detail_text) > 55:
-            detail_text = detail_text[:52] + "..."
+                addons_dict = {raw_addons: 0}
+        elif isinstance(raw_addons, list):
+            addons_dict = {addon: 0 for addon in raw_addons}
+        elif isinstance(raw_addons, dict):
+            addons_dict = raw_addons
+
+        # Print 1: Date & Machine Size
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(40, y, date_str); c.drawString(100, y, f"Machine Size: {size_str}")
+        if base_price > 0:
+            c.drawString(460, y, f"{base_price:,.2f}")
+        else:
+            c.drawString(460, y, f"{total_price:,.2f}") # Fallback for very old records
+        y -= 16
         
-        c.drawString(40, y, str(row['Date'])); c.drawString(100, y, str(row['Q_No'])); c.drawString(170, y, detail_text)
+        # Print 2: Speed
+        c.setFont("Helvetica-Oblique", 10)
+        c.drawString(110, y, f"• Speed: {speed_str}")
+        y -= 16
         
-        try: 
-            amt = int(row['Total_Price'])
-            c.drawString(480, y, f"{amt:,.2f}")
-            grand_total += amt
-        except: 
-            c.drawString(480, y, "0.00")
+        # Print 3: Addons Loop
+        for name, price in addons_dict.items():
+            p_val = int(price) if price else 0
+            c.drawString(110, y, f"• {name}")
+            if p_val > 0:
+                c.drawString(460, y, f"{p_val:,.2f}")
+            y -= 16
             
-        y -= 20
+        # Print 4: Subtotal for this specific bill
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(110, y, "Bill Total:")
+        c.drawString(460, y, f"{total_price:,.2f}")
+        
+        grand_total += total_price
+        y -= 25 # Space between different bills
+        
         if y < 100:
-            c.showPage(); y = 750; c.setFont("Helvetica", 10)
-            c.drawString(40, y, "Date"); c.drawString(100, y, "Q.No"); c.drawString(170, y, "Machine Details (Size + Addons)"); c.drawString(480, y, "Amount (Rs)")
+            c.showPage(); y = 750; c.setFont("Helvetica-Bold", 11)
+            c.drawString(40, y, "Date"); c.drawString(100, y, "Description / Details"); c.drawString(460, y, "Amount (Rs)")
             c.line(40, y-5, 550, y-5); y -= 25
         
     c.line(40, y-5, 550, y-5)
@@ -324,7 +352,7 @@ if menu == "➕ New Quotation Session":
 
 
 # ==========================================
-# 2. PARTY HISTORY PAGE (WITH YEAR/MONTH FILTERS)
+# 2. PARTY HISTORY PAGE 
 # ==========================================
 elif menu == "📜 Party History & Search":
     st.title("Party Search History")
@@ -335,15 +363,10 @@ elif menu == "📜 Party History & Search":
     else:
         df = pd.DataFrame(data)
         
-        # Clean Party Names
         df['Clean_Party'] = df['Party'].astype(str).str.strip().str.title()
-        
-        # Parse Dates for filtering
         df['DateObj'] = pd.to_datetime(df['Date'], format="%d-%m-%Y", errors='coerce')
         df['Year'] = df['DateObj'].dt.year
         df['MonthNum'] = df['DateObj'].dt.month
-        
-        # Sort by Date logically
         df = df.sort_values(by='DateObj')
         
         search_party = st.text_input("🔍 Type here to search Table (Party Name or Q_No):", placeholder="Live filter...")
@@ -368,10 +391,8 @@ elif menu == "📜 Party History & Search":
             pdf_party = st.selectbox("Select Party:", ["-- Select Party --"] + unique_parties)
             
             if pdf_party != "-- Select Party --":
-                # Filter base party data
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
                 
-                # Dynamic Year Filter
                 years = sorted(party_df['Year'].dropna().unique().astype(int).tolist(), reverse=True)
                 selected_year = st.selectbox("Select Year:", ["All Time"] + years)
                 
@@ -381,7 +402,6 @@ elif menu == "📜 Party History & Search":
                     party_df = party_df[party_df['Year'] == selected_year]
                     period_str = f"Year {selected_year}"
                     
-                    # Dynamic Month Filter (only shows if year is selected)
                     months_present = sorted(party_df['MonthNum'].dropna().unique().astype(int).tolist())
                     month_names_dict = {m: calendar.month_name[m] for m in months_present}
                     
@@ -392,7 +412,7 @@ elif menu == "📜 Party History & Search":
                         party_df = party_df[party_df['MonthNum'] == month_num]
                         period_str = f"{selected_month} {selected_year}"
 
-                if st.button(f"Generate {period_str} PDF"):
+                if st.button(f"Generate Detailed {period_str} PDF"):
                     if not party_df.empty:
                         hist_pdf = create_history_pdf(pdf_party, party_df, period_str)
                         st.download_button("📥 Download Statement", data=hist_pdf, file_name=f"Statement_{pdf_party.replace(' ','_')}_{period_str.replace(' ','_')}.pdf", mime="application/pdf")
