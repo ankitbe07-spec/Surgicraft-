@@ -1,3 +1,4 @@
+
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
@@ -439,4 +440,61 @@ elif menu == "🔍 Part Price Finder":
                 st.download_button("📥 Click Here to Download PDF", data=pdf_buffer, file_name=file_name, mime="application/pdf")
 
 # ==========================================
-# 4. MASTE
+# 4. MASTER SETTINGS PAGE
+# ==========================================
+elif menu == "⚙️ Master Settings":
+    display_header()
+    st.title("Master Settings 🔒")
+    pwd_input = st.text_input("Enter Master Password:", type="password")
+    
+    if pwd_input != settings.get('password', '1234'):
+        if pwd_input: st.error("❌ Incorrect Password!")
+        st.stop()
+        
+    st.success("Access Granted!")
+    tab1, tab2 = st.tabs(["Machine Prices", "Add-ons"])
+    
+    with tab1:
+        st.subheader("Edit/Remove Sizes")
+        prices = settings['prices']
+        for size, price in list(prices.items()):
+            cA, cB, cC = st.columns([2, 2, 1])
+            cA.write(f"**{format_size(size)}**")
+            prices[size] = cB.number_input("Price", value=price, step=1000, key=f"p_{size}", label_visibility="collapsed")
+            if cC.button("❌ Remove", key=f"d_{size}"):
+                del prices[size]; save_settings(settings); st.rerun()
+                    
+        st.write("---")
+        c1, c2, c3 = st.columns(3)
+        n_w = c1.text_input("Width (e.g. 24)")
+        n_l = c2.text_input("Length (e.g. 48)")
+        n_p = c3.number_input("Base Price", value=0, step=1000)
+        if st.button("➕ Add New Size"):
+            if n_w and n_l and n_p > 0:
+                settings['prices'][f"{n_w}x{n_l}"] = n_p
+                save_settings(settings); st.rerun()
+
+    with tab2:
+        st.subheader("Edit/Remove Add-ons")
+        addons = settings['addons']
+        for name, price in list(addons.items()):
+            if name in ["LowHighExtra"]:
+                cA, cB = st.columns([2, 3])
+                cA.write(f"**{name}**")
+                addons[name] = cB.number_input("Price", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
+            else:
+                cA, cB, cC = st.columns([2, 2, 1])
+                cA.write(f"**{name}**")
+                addons[name] = cB.number_input("Price", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
+                if cC.button("❌ Remove", key=f"da_{name}"):
+                    del addons[name]; save_settings(settings); st.rerun()
+                        
+        if st.button("💾 Save Add-on Changes", type="primary"): save_settings(settings); st.success("Updated!")
+        st.write("---")
+        c1, c2 = st.columns(2)
+        new_a = c1.text_input("New Add-on Name")
+        new_p = c2.number_input("Add-on Price", value=0, step=500)
+        if st.button("➕ Add New Option"):
+            if new_a and new_p > 0:
+                settings['addons'][new_a] = new_p
+                save_settings(settings); st.rerun()
