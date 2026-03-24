@@ -170,7 +170,7 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
     c.save(); buffer.seek(0)
     return buffer
 
-# --- PDF GENERATOR (Search) - WITH FULL DETAILS NOW! ---
+# --- PDF GENERATOR (Search) ---
 def create_part_search_pdf(party_name, part_name, df):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -330,7 +330,6 @@ if menu == "➕ Add New Entry":
         c1, c2 = st.columns(2)
         
         with c1:
-            # FORMATTING APPLIED HERE FOR DROPDOWN
             part_sel = st.selectbox("Select Part (Type to search):", ["-- New Part --"] + unique_parts_list, index=0, format_func=format_size_for_ui)
             if part_sel == "-- New Part --":
                 part_name = st.text_input("Enter New Part Name / Description:")
@@ -369,14 +368,14 @@ elif menu == "📜 Party History & Edit":
             if pdf_party != "-- Select Party --":
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
                 
-                # Apply Formatting for Display Table
                 display_party_df = party_df[['Date', 'Size', 'Speed', 'Total_Price']].copy()
                 display_party_df['Size'] = display_party_df['Size'].apply(format_size)
                 st.dataframe(display_party_df.rename(columns={'Size':'Item/Machine', 'Total_Price':'Price (Rs)'}), use_container_width=True)
                 
                 if st.button(f"📄 Download {pdf_party}'s Record PDF"):
                     hist_pdf = create_history_pdf(pdf_party, party_df, "Lifetime Record")
-                    st.download_button("📥 Click to Save PDF", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf")
+                    # Changed mime type to force direct download on iPhone
+                    st.download_button("📥 Click to Save PDF", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/octet-stream")
 
         with tab2:
             st.write("### Edit Existing Record (By Party)")
@@ -385,7 +384,6 @@ elif menu == "📜 Party History & Edit":
             if edit_party != "-- Select Party --":
                 party_items = df[df['Clean_Party'] == edit_party].copy()
                 
-                # Add formatting for the edit dropdown
                 party_items['Display'] = party_items['Date'].astype(str) + " | " + party_items['Size'].apply(format_size) + " | Rs. " + party_items['Total_Price'].astype(str)
                 item_options = party_items['Display'].tolist()
                 
@@ -471,21 +469,20 @@ elif menu == "🔍 Part Price Finder":
         c1, c2 = st.columns(2)
         search_party_name = c1.selectbox("1. Select Party (Type to search):", ["-- All Parties --"] + unique_parties_list, index=0)
         
-        # --- SMART FILTER LOGIC WITH FORMATTING ---
         if search_party_name != "-- All Parties --":
             party_specific_parts = sorted(df[df['Clean_Party'] == search_party_name]['Size'].astype(str).str.strip().unique().tolist())
             search_part_name = c2.selectbox(
                 "2. Select Part / Item (Type to search):", 
                 ["-- All Items --"] + party_specific_parts, 
                 index=0,
-                format_func=format_size_for_ui  # Applied formatting here!
+                format_func=format_size_for_ui
             )
         else:
             search_part_name = c2.selectbox(
                 "2. Select Part / Item (Type to search):", 
                 ["-- All Items --"] + all_items_list, 
                 index=0,
-                format_func=format_size_for_ui  # Applied formatting here!
+                format_func=format_size_for_ui
             )
         
         filtered_df = df.copy()
@@ -503,7 +500,6 @@ elif menu == "🔍 Part Price Finder":
             st.warning("Aa naam thi koi entry mali nathi.")
         else:
             display_df = filtered_df[['Date', 'Party', 'Size', 'Total_Price']].copy()
-            # Applied format_size for screen display
             display_df['Size'] = display_df['Size'].apply(format_size)
             display_df.rename(columns={'Size': 'Item / Part Name', 'Total_Price': 'Price (Rs)'}, inplace=True)
             st.dataframe(display_df, use_container_width=True)
@@ -511,7 +507,8 @@ elif menu == "🔍 Part Price Finder":
             if st.button("📄 Download Search Result PDF"):
                 pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
                 file_name = f"PriceSearch_Result.pdf"
-                st.download_button("📥 Click Here to Download PDF", data=pdf_buffer, file_name=file_name, mime="application/pdf")
+                # Changed mime type to force direct download on iPhone
+                st.download_button("📥 Click Here to Download PDF", data=pdf_buffer, file_name=file_name, mime="application/octet-stream")
 
 # ==========================================
 # 4. MASTER SETTINGS PAGE
