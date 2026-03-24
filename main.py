@@ -67,13 +67,18 @@ except Exception as e:
     st.error(f"Google Sheet Connection Error! Error: {e}")
     st.stop()
 
-# --- HELPER FORMAT FUNCTION (Aa function automatic inch " nishan lagave che) ---
+# --- HELPER FORMAT FUNCTIONS ---
 def format_size(size_str):
     if "x" in size_str:
         parts = size_str.split('x')
-        if len(parts) == 2:
+        if len(parts) == 2 and parts[0].strip().isdigit():
             return f'{parts[0].strip()}" x {parts[1].strip()}"'
     return size_str
+
+def format_size_for_ui(size_str):
+    if size_str in ["-- All Items --", "-- New Part --"]:
+        return size_str
+    return format_size(str(size_str))
 
 # --- HEADER WITH LOGO & GREEN TEXT ---
 def display_header():
@@ -117,7 +122,6 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
         c.drawString(40, y, date_str)
         
         if speed_str == "Spare Part":
-            # Niche part name kapay nahi em setting karyu che
             part_display = f"Part: {size_str}"
             if len(part_display) > 60: part_display = part_display[:57] + "..."
             c.drawString(110, y, part_display)
@@ -166,7 +170,7 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
     c.save(); buffer.seek(0)
     return buffer
 
-# --- PDF GENERATOR (Search) - Full name visibility fix ---
+# --- PDF GENERATOR (Search) - WITH FULL DETAILS NOW! ---
 def create_part_search_pdf(party_name, part_name, df):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -175,30 +179,68 @@ def create_part_search_pdf(party_name, part_name, df):
     
     c.setFont("Helvetica", 11)
     c.drawString(40, 780, f"Party: {party_name if party_name and party_name != '-- All Parties --' else 'All Parties'}")
-    c.drawString(40, 765, f"Item/Part: {part_name if part_name and part_name != '-- All Items --' else 'All Items'}")
+    c.drawString(40, 765, f"Item/Part: {format_size(part_name) if part_name and part_name != '-- All Items --' else 'All Items'}")
     c.drawString(400, 780, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
     y = 730
     c.setFont("Helvetica-Bold", 11)
     c.drawString(40, y, "Date")
     c.drawString(110, y, "Party Name")
-    c.drawString(250, y, "Item / Part Name") # Shifted to give more space
-    c.drawString(470, y, "Price (Rs)")
+    c.drawString(230, y, "Item / Machine Details")
+    c.drawString(470, y, "Amount (Rs)")
     c.line(40, y-5, 550, y-5)
     
     y -= 25
     c.setFont("Helvetica", 10)
     
     for index, row in df.iterrows():
-        c.drawString(40, y, str(row['Date']))
-        c.drawString(110, y, str(row['Party'])[:25]) # Kept safe margin for Party
-        
-        full_size_name = str(row['Size'])
-        if len(full_size_name) > 55: full_size_name = full_size_name[:52] + "..." # Increased limit to 55 characters!
-        
-        c.drawString(250, y, full_size_name) 
-        c.drawString(470, y, f"{int(row['Total_Price']):,.2f}")
-        y -= 20
+        date_str = str(row['Date'])
+        party_str = str(row['Party'])[:20]
+        size_str = format_size(str(row['Size']))
+        speed_str = str(row.get('Speed', ''))
+        total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
+
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(40, y, date_str)
+        c.drawString(110, y, party_str)
+
+        if speed_str == "Spare Part":
+            part_display = f"Part: {size_str}"
+            if len(part_display) > 40: part_display = part_display[:37] + "..."
+            c.drawString(230, y, part_display)
+            c.drawString(470, y, f"{total_price:,.2f}")
+            y -= 20
+        else:
+            base_price = int(settings['prices'].get(str(row['Size']), 0))
+            c.drawString(230, y, f"Machine: {size_str}")
+            if base_price > 0: c.drawString(470, y, f"{base_price:,.2f}")
+            else: c.drawString(470, y, f"{total_price:,.2f}")
+            y -= 16
+
+            c.setFont("Helvetica-Oblique", 10)
+            c.drawString(240, y, f"• Speed: {speed_str}")
+            y -= 16
+
+            raw_addons = row.get('Options', '{}')
+            addons_dict = {}
+            if isinstance(raw_addons, str):
+                try:
+                    parsed = json.loads(raw_addons)
+                    addons_dict = parsed if isinstance(parsed, dict) else {addon: 0 for addon in parsed}
+                except: addons_dict = {raw_addons: 0}
+            elif isinstance(raw_addons, list): addons_dict = {addon: 0 for addon in raw_addons}
+            elif isinstance(raw_addons, dict): addons_dict = raw_addons
+
+            for name, price in addons_dict.items():
+                p_val = int(price) if price else 0
+                c.drawString(240, y, f"• {name}")
+                if p_val > 0: c.drawString(470, y, f"{p_val:,.2f}")
+                y -= 16
+
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(240, y, "Total Price:")
+            c.drawString(470, y, f"{total_price:,.2f}")
+            y -= 25
         
         if y < 80:
             c.showPage()
@@ -206,8 +248,8 @@ def create_part_search_pdf(party_name, part_name, df):
             c.setFont("Helvetica-Bold", 11)
             c.drawString(40, y, "Date")
             c.drawString(110, y, "Party Name")
-            c.drawString(250, y, "Item / Part Name")
-            c.drawString(470, y, "Price (Rs)")
+            c.drawString(230, y, "Item / Machine Details")
+            c.drawString(470, y, "Amount (Rs)")
             c.line(40, y-5, 550, y-5)
             y -= 25
             c.setFont("Helvetica", 10)
@@ -279,7 +321,7 @@ if menu == "➕ Add New Entry":
                 else:
                     dt = datetime.now().strftime("%d-%m-%Y")
                     sheet.append_row([st.session_state.q_no, party_name, dt, size, speed, json.dumps(addons_prices_struct), final_total_price])
-                    st.toast(f"{size} Machine Saved for {party_name}! ✅")
+                    st.toast(f"{format_size(size)} Machine Saved for {party_name}! ✅")
                     st.cache_resource.clear()
                     st.rerun()
 
@@ -288,7 +330,8 @@ if menu == "➕ Add New Entry":
         c1, c2 = st.columns(2)
         
         with c1:
-            part_sel = st.selectbox("Select Part (Type to search):", ["-- New Part --"] + unique_parts_list, index=0)
+            # FORMATTING APPLIED HERE FOR DROPDOWN
+            part_sel = st.selectbox("Select Part (Type to search):", ["-- New Part --"] + unique_parts_list, index=0, format_func=format_size_for_ui)
             if part_sel == "-- New Part --":
                 part_name = st.text_input("Enter New Part Name / Description:")
             else:
@@ -303,7 +346,7 @@ if menu == "➕ Add New Entry":
             else:
                 dt = datetime.now().strftime("%d-%m-%Y")
                 sheet.append_row([st.session_state.q_no, party_name, dt, part_name, "Spare Part", "{}", part_price])
-                st.toast(f"{part_name} Saved for {party_name}! ✅")
+                st.toast(f"{format_size(part_name)} Saved for {party_name}! ✅")
                 st.cache_resource.clear()
                 st.rerun()
 
@@ -325,7 +368,11 @@ elif menu == "📜 Party History & Edit":
             pdf_party = st.selectbox("Select Party (Type to search):", ["-- Select Party --"] + unique_parties_list, key="pdf_party")
             if pdf_party != "-- Select Party --":
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
-                st.dataframe(party_df[['Date', 'Size', 'Speed', 'Total_Price']].rename(columns={'Size':'Item/Machine', 'Total_Price':'Price (Rs)'}), use_container_width=True)
+                
+                # Apply Formatting for Display Table
+                display_party_df = party_df[['Date', 'Size', 'Speed', 'Total_Price']].copy()
+                display_party_df['Size'] = display_party_df['Size'].apply(format_size)
+                st.dataframe(display_party_df.rename(columns={'Size':'Item/Machine', 'Total_Price':'Price (Rs)'}), use_container_width=True)
                 
                 if st.button(f"📄 Download {pdf_party}'s Record PDF"):
                     hist_pdf = create_history_pdf(pdf_party, party_df, "Lifetime Record")
@@ -337,7 +384,9 @@ elif menu == "📜 Party History & Edit":
             
             if edit_party != "-- Select Party --":
                 party_items = df[df['Clean_Party'] == edit_party].copy()
-                party_items['Display'] = party_items['Date'].astype(str) + " | " + party_items['Size'].astype(str) + " | Rs. " + party_items['Total_Price'].astype(str)
+                
+                # Add formatting for the edit dropdown
+                party_items['Display'] = party_items['Date'].astype(str) + " | " + party_items['Size'].apply(format_size) + " | Rs. " + party_items['Total_Price'].astype(str)
                 item_options = party_items['Display'].tolist()
                 
                 selected_display = st.selectbox("2. Select Specific Item to Edit:", item_options)
@@ -378,7 +427,7 @@ elif menu == "📜 Party History & Edit":
             
             if del_party != "-- Select Party --":
                 del_items = df[df['Clean_Party'] == del_party].copy()
-                del_items['Display'] = del_items['Date'].astype(str) + " | " + del_items['Size'].astype(str) + " | Rs. " + del_items['Total_Price'].astype(str)
+                del_items['Display'] = del_items['Date'].astype(str) + " | " + del_items['Size'].apply(format_size) + " | Rs. " + del_items['Total_Price'].astype(str)
                 
                 selected_del = st.selectbox("2. Select Item to Delete:", del_items['Display'].tolist())
                 
@@ -422,14 +471,22 @@ elif menu == "🔍 Part Price Finder":
         c1, c2 = st.columns(2)
         search_party_name = c1.selectbox("1. Select Party (Type to search):", ["-- All Parties --"] + unique_parties_list, index=0)
         
-        # --- SMART FILTER LOGIC ---
+        # --- SMART FILTER LOGIC WITH FORMATTING ---
         if search_party_name != "-- All Parties --":
-            # Jo party select kari hoy, to khali e party na j parts kadhva
             party_specific_parts = sorted(df[df['Clean_Party'] == search_party_name]['Size'].astype(str).str.strip().unique().tolist())
-            search_part_name = c2.selectbox("2. Select Part / Item (Type to search):", ["-- All Items --"] + party_specific_parts, index=0)
+            search_part_name = c2.selectbox(
+                "2. Select Part / Item (Type to search):", 
+                ["-- All Items --"] + party_specific_parts, 
+                index=0,
+                format_func=format_size_for_ui  # Applied formatting here!
+            )
         else:
-            # Jo koi party select na kari hoy to badha parts batavva
-            search_part_name = c2.selectbox("2. Select Part / Item (Type to search):", ["-- All Items --"] + all_items_list, index=0)
+            search_part_name = c2.selectbox(
+                "2. Select Part / Item (Type to search):", 
+                ["-- All Items --"] + all_items_list, 
+                index=0,
+                format_func=format_size_for_ui  # Applied formatting here!
+            )
         
         filtered_df = df.copy()
         
@@ -446,6 +503,8 @@ elif menu == "🔍 Part Price Finder":
             st.warning("Aa naam thi koi entry mali nathi.")
         else:
             display_df = filtered_df[['Date', 'Party', 'Size', 'Total_Price']].copy()
+            # Applied format_size for screen display
+            display_df['Size'] = display_df['Size'].apply(format_size)
             display_df.rename(columns={'Size': 'Item / Part Name', 'Total_Price': 'Price (Rs)'}, inplace=True)
             st.dataframe(display_df, use_container_width=True)
             
