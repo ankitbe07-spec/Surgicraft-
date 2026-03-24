@@ -4,6 +4,7 @@ from google.oauth2.service_account import Credentials
 import json
 import os
 from datetime import datetime
+import calendar
 import pandas as pd
 import io
 from reportlab.pdfgen import canvas
@@ -89,7 +90,6 @@ def create_bill_pdf(party, q_no, items_data, date_str):
     y -= 25; c.setFont("Helvetica", 11); grand_total = 0
     
     for i, item in enumerate(items_data, 1):
-        # Format Size with Inch symbol
         base_size = format_size(item.get('size', 'Unknown Size'))
         base_price = int(item.get('base_price', 0))
         
@@ -101,7 +101,6 @@ def create_bill_pdf(party, q_no, items_data, date_str):
         c.setFont("Helvetica-Oblique", 11); c.drawString(100, y, f"  • Speed: {speed}"); c.setFont("Helvetica", 11);
         y -= 18
         
-        # SMART FIX FOR OLD DATA FORMATS (The AttributeError fix)
         raw_addons = item.get('addons_breakdown', {})
         addons_dict = {}
         
@@ -131,7 +130,6 @@ def create_bill_pdf(party, q_no, items_data, date_str):
             c.drawString(50, y, "Sr."); c.drawString(90, y, "Description"); c.drawString(460, y, "Amount (Rs)")
             c.line(50, y-5, 550, y-5); y -= 25
 
-    # Check if total match (fallback for old bills where breakdown price wasn't saved)
     if grand_total == 0 and item.get('total'):
         grand_total = int(item.get('total'))
 
@@ -142,7 +140,7 @@ def create_bill_pdf(party, q_no, items_data, date_str):
     c.save(); buffer.seek(0)
     return buffer
 
-def create_history_pdf(party, records_df):
+def create_history_pdf(party, records_df, period_str="Lifetime"):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     
@@ -154,24 +152,42 @@ def create_history_pdf(party, records_df):
         except: pass
     
     c.setFont("Helvetica-Bold", 20); c.drawString(text_start_x, 780, "SURGICRAFT INDUSTRIES")
-    c.setFont("Helvetica", 12); c.drawString(text_start_x, 765, "Customer Account History Statement")
+    c.setFont("Helvetica", 12); c.drawString(text_start_x, 765, f"{period_str} Account History Statement")
     c.line(40, 740, 550, 740)
     
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(40, 710, f"Party Name: {party}"); c.drawString(400, 710, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
+    c.drawString(40, 710, f"Party Name: {party}"); c.drawString(400, 710, f"Date generated: {datetime.now().strftime('%d-%m-%Y')}")
     
-    y = 670; c.setFont("Helvetica-Bold", 11)
-    c.drawString(40, y, "Date"); c.drawString(110, y, "Q.No"); c.drawString(280, y, "Size"); c.drawString(480, y, "Amount (Rs)")
+    y = 670; c.setFont("Helvetica-Bold", 10)
+    c.drawString(40, y, "Date"); c.drawString(100, y, "Q.No"); c.drawString(170, y, "Machine Details (Size + Addons)"); c.drawString(480, y, "Amount (Rs)")
     c.line(40, y-5, 550, y-5)
     
-    y -= 25; c.setFont("Helvetica", 11); grand_total = 0
-    records_df = records_df.tail(100)
+    y -= 25; c.setFont("Helvetica", 10); grand_total = 0
     
     for index, row in records_df.iterrows():
-        # Format Size with Inch symbol
         disp_size = format_size(str(row['Size']))
         
-        c.drawString(40, y, str(row['Date'])); c.drawString(110, y, str(row['Q_No'])); c.drawString(280, y, disp_size)
+        raw_addons = str(row.get('Options', '{}'))
+        addons_str = ""
+        if raw_addons and raw_addons != "{}":
+            try:
+                parsed = json.loads(raw_addons)
+                if isinstance(parsed, dict):
+                    addons_list = [k for k, v in parsed.items() if int(v) > 0]
+                    addons_str = ", ".join(addons_list)
+                elif isinstance(parsed, list):
+                    addons_str = ", ".join(parsed)
+            except:
+                addons_str = raw_addons
+                
+        detail_text = f"{disp_size}"
+        if addons_str and addons_str != "{}":
+            detail_text += f" | {addons_str}"
+            
+        if len(detail_text) > 55:
+            detail_text = detail_text[:52] + "..."
+        
+        c.drawString(40, y, str(row['Date'])); c.drawString(100, y, str(row['Q_No'])); c.drawString(170, y, detail_text)
         
         try: 
             amt = int(row['Total_Price'])
@@ -182,12 +198,12 @@ def create_history_pdf(party, records_df):
             
         y -= 20
         if y < 100:
-            c.showPage(); y = 750; c.setFont("Helvetica", 11)
-            c.drawString(40, y, "Date"); c.drawString(110, y, "Q.No"); c.drawString(280, y, "Size"); c.drawString(480, y, "Amount (Rs)")
+            c.showPage(); y = 750; c.setFont("Helvetica", 10)
+            c.drawString(40, y, "Date"); c.drawString(100, y, "Q.No"); c.drawString(170, y, "Machine Details (Size + Addons)"); c.drawString(480, y, "Amount (Rs)")
             c.line(40, y-5, 550, y-5); y -= 25
         
     c.line(40, y-5, 550, y-5)
-    c.setFont("Helvetica-Bold", 12); c.drawString(40, y-25, f"TOTAL HISTORICAL VALUE: Rs. {grand_total:,.2f}/-")
+    c.setFont("Helvetica-Bold", 12); c.drawString(40, y-25, f"{period_str.upper()} TOTAL VALUE: Rs. {grand_total:,.2f}/-")
     
     c.save(); buffer.seek(0)
     return buffer
@@ -308,7 +324,7 @@ if menu == "➕ New Quotation Session":
 
 
 # ==========================================
-# 2. PARTY HISTORY PAGE (DROPDOWNS ADDED)
+# 2. PARTY HISTORY PAGE (WITH YEAR/MONTH FILTERS)
 # ==========================================
 elif menu == "📜 Party History & Search":
     st.title("Party Search History")
@@ -319,6 +335,17 @@ elif menu == "📜 Party History & Search":
     else:
         df = pd.DataFrame(data)
         
+        # Clean Party Names
+        df['Clean_Party'] = df['Party'].astype(str).str.strip().str.title()
+        
+        # Parse Dates for filtering
+        df['DateObj'] = pd.to_datetime(df['Date'], format="%d-%m-%Y", errors='coerce')
+        df['Year'] = df['DateObj'].dt.year
+        df['MonthNum'] = df['DateObj'].dt.month
+        
+        # Sort by Date logically
+        df = df.sort_values(by='DateObj')
+        
         search_party = st.text_input("🔍 Type here to search Table (Party Name or Q_No):", placeholder="Live filter...")
         
         if search_party:
@@ -328,32 +355,52 @@ elif menu == "📜 Party History & Search":
         else:
             filtered_df = df.tail(100)
             
-        st.dataframe(filtered_df, use_container_width=True)
+        st.dataframe(filtered_df.drop(columns=['Clean_Party', 'DateObj', 'Year', 'MonthNum'], errors='ignore'), use_container_width=True)
         st.write("---")
         
         col1, col2, col3 = st.columns(3)
         
-        # Get Unique lists for Dropdowns
-        unique_parties = df['Party'].astype(str).unique().tolist()
-        unique_qnos = df['Q_No'].astype(str).unique().tolist()
+        unique_parties = sorted(df['Clean_Party'].unique().tolist())
+        unique_qnos = sorted(df['Q_No'].astype(str).unique().tolist(), reverse=True)
         
         with col1:
-            st.write("### 📜 Party History PDF")
-            # Dropdown replacing text input
-            pdf_party = st.selectbox("Select Party for History Statement:", ["-- Select Party --"] + unique_parties)
+            st.write("### 📜 Party Statement PDF")
+            pdf_party = st.selectbox("Select Party:", ["-- Select Party --"] + unique_parties)
             
-            if st.button("Generate Statement PDF"):
-                if pdf_party != "-- Select Party --":
-                    party_df = df[df['Party'].astype(str) == pdf_party]
+            if pdf_party != "-- Select Party --":
+                # Filter base party data
+                party_df = df[df['Clean_Party'] == pdf_party].copy()
+                
+                # Dynamic Year Filter
+                years = sorted(party_df['Year'].dropna().unique().astype(int).tolist(), reverse=True)
+                selected_year = st.selectbox("Select Year:", ["All Time"] + years)
+                
+                period_str = "Lifetime"
+                
+                if selected_year != "All Time":
+                    party_df = party_df[party_df['Year'] == selected_year]
+                    period_str = f"Year {selected_year}"
+                    
+                    # Dynamic Month Filter (only shows if year is selected)
+                    months_present = sorted(party_df['MonthNum'].dropna().unique().astype(int).tolist())
+                    month_names_dict = {m: calendar.month_name[m] for m in months_present}
+                    
+                    selected_month = st.selectbox("Select Month:", ["All Months"] + list(month_names_dict.values()))
+                    
+                    if selected_month != "All Months":
+                        month_num = [k for k, v in month_names_dict.items() if v == selected_month][0]
+                        party_df = party_df[party_df['MonthNum'] == month_num]
+                        period_str = f"{selected_month} {selected_year}"
+
+                if st.button(f"Generate {period_str} PDF"):
                     if not party_df.empty:
-                        hist_pdf = create_history_pdf(pdf_party, party_df)
-                        st.download_button("📥 Download History PDF", data=hist_pdf, file_name=f"Statement_{pdf_party.replace(' ','_')}.pdf", mime="application/pdf")
-                else:
-                    st.warning("Please select a party name from the list.")
+                        hist_pdf = create_history_pdf(pdf_party, party_df, period_str)
+                        st.download_button("📥 Download Statement", data=hist_pdf, file_name=f"Statement_{pdf_party.replace(' ','_')}_{period_str.replace(' ','_')}.pdf", mime="application/pdf")
+                    else:
+                        st.warning("No records found for this period.")
 
         with col2:
             st.write("### 📄 Reprint Old Bill")
-            # Dropdown replacing text input
             reprint_qno = st.selectbox("Select Q_No to Reprint:", ["-- Select Q_No --"] + unique_qnos)
             
             if st.button("Generate Detailed Bill PDF"):
@@ -372,7 +419,7 @@ elif menu == "📜 Party History & Search":
                                 "size": size_n, 
                                 "base_price": base_p_calc,
                                 "speed": r['Speed'],
-                                "addons_breakdown": r['Options'], # The helper function handles parsing now
+                                "addons_breakdown": r['Options'], 
                                 "total": r['Total_Price']
                             })
                         
