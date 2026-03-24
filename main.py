@@ -81,7 +81,7 @@ def format_size_for_ui(size_str):
         return size_str
     return format_size(str(size_str))
 
-# --- COMBO: IPHONE IN-APP PREVIEW ---
+# --- IPHONE IN-APP PREVIEW ---
 def display_pdf_in_app(pdf_buffer):
     base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
     pdf_display = f'''
@@ -90,7 +90,7 @@ def display_pdf_in_app(pdf_buffer):
         style="border: 2px solid #ccc; border-radius: 8px;">
         </iframe>
     '''
-    st.markdown("### 📄 PDF Preview (Screenshot lai shako cho)")
+    st.markdown("### 📄 PDF Preview (iPhone Mate)")
     st.markdown(pdf_display, unsafe_allow_html=True)
 
 # --- HEADER WITH LOGO & GREEN TEXT ---
@@ -385,11 +385,16 @@ elif menu == "📜 Party History & Edit":
                 display_party_df['Size'] = display_party_df['Size'].apply(format_size)
                 st.dataframe(display_party_df.rename(columns={'Size':'Item/Machine', 'Total_Price':'Price (Rs)'}), use_container_width=True)
                 
-                if st.button(f"📄 View {pdf_party}'s PDF Here"):
-                    hist_pdf = create_history_pdf(pdf_party, party_df, "Lifetime Record")
-                    display_pdf_in_app(hist_pdf)
-                    # Android/PC mate direct download button
-                    st.download_button("📥 Click Here to Download PDF (For Android / PC)", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf")
+                st.write("---")
+                hist_pdf = create_history_pdf(pdf_party, party_df, "Lifetime Record")
+                
+                # --- SIDE-BY-SIDE BUTTONS ---
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.download_button("📥 Direct Download (Android/PC)", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf", use_container_width=True)
+                with c2:
+                    if st.button("👁️ View PDF Here (iPhone)", use_container_width=True):
+                        display_pdf_in_app(hist_pdf)
 
         with tab2:
             st.write("### Edit Existing Record (By Party)")
@@ -518,11 +523,16 @@ elif menu == "🔍 Part Price Finder":
             display_df.rename(columns={'Size': 'Item / Part Name', 'Total_Price': 'Price (Rs)'}, inplace=True)
             st.dataframe(display_df, use_container_width=True)
             
-            if st.button("📄 View Search Result PDF Here"):
-                pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
-                display_pdf_in_app(pdf_buffer)
-                # Android/PC mate direct download button
-                st.download_button("📥 Click Here to Download PDF (For Android / PC)", data=pdf_buffer, file_name="PriceSearch_Result.pdf", mime="application/pdf")
+            st.write("---")
+            pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
+            
+            # --- SIDE-BY-SIDE BUTTONS ---
+            c1, c2 = st.columns(2)
+            with c1:
+                st.download_button("📥 Direct Download (Android/PC)", data=pdf_buffer, file_name="PriceSearch_Result.pdf", mime="application/pdf", use_container_width=True)
+            with c2:
+                if st.button("👁️ View PDF Here (iPhone)", use_container_width=True):
+                    display_pdf_in_app(pdf_buffer)
 
 # ==========================================
 # 4. MASTER SETTINGS PAGE
