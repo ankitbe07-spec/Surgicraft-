@@ -62,12 +62,11 @@ def format_size(size_str):
             return f'{parts[0].strip()}" x {parts[1].strip()}"'
     return size_str
 
-# --- PDF GENERATORS (Clean & Spacious Layout) ---
+# --- PDF GENERATORS ---
 def create_bill_pdf(party, q_no, items_data, date_str):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     
-    # Header removed to save space. Directly starting from Party details.
     c.setFont("Helvetica-Bold", 12)
     c.drawString(40, 800, f"Quotation No: {q_no}")
     c.drawString(400, 800, f"Date: {date_str}")
@@ -87,14 +86,12 @@ def create_bill_pdf(party, q_no, items_data, date_str):
         c.drawString(40, y, str(i))
         
         if speed == "Spare Part":
-            # For Spare Parts
             c.setFont("Helvetica-Bold", 11)
             c.drawString(90, y, f"Part / Item: {base_size}")
             c.drawString(460, y, f"{total_item_price:,.2f}")
             c.setFont("Helvetica", 11)
             grand_total += total_item_price; y -= 25
         else:
-            # For Machines
             base_price = int(item.get('base_price', 0))
             c.setFont("Helvetica-Bold", 11); c.drawString(90, y, f"Machine Size: {base_size}"); c.setFont("Helvetica", 11)
             if base_price > 0: c.drawString(460, y, f"{base_price:,.2f}")
@@ -138,7 +135,6 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     
-    # Clean Header for History
     c.setFont("Helvetica-Bold", 14); c.drawString(40, 800, f"Account History Statement ({period_str})")
     c.setFont("Helvetica-Bold", 11)
     c.drawString(40, 775, f"Party Name: {party}")
@@ -211,9 +207,55 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
     c.save(); buffer.seek(0)
     return buffer
 
+def create_part_search_pdf(party_name, part_name, df):
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(40, 800, "Item / Part Price Search Report")
+    
+    c.setFont("Helvetica", 11)
+    c.drawString(40, 780, f"Party: {party_name if party_name else 'All Parties'}")
+    c.drawString(40, 765, f"Item/Part: {part_name if part_name else 'All Items'}")
+    c.drawString(400, 780, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
+    
+    y = 730
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, y, "Date")
+    c.drawString(120, y, "Party Name")
+    c.drawString(280, y, "Item / Part Name")
+    c.drawString(460, y, "Price (Rs)")
+    c.line(40, y-5, 550, y-5)
+    
+    y -= 25
+    c.setFont("Helvetica", 10)
+    
+    for index, row in df.iterrows():
+        c.drawString(40, y, str(row['Date']))
+        c.drawString(120, y, str(row['Party'])[:22])
+        c.drawString(280, y, str(row['Size'])[:30])
+        c.drawString(460, y, f"{int(row['Total_Price']):,.2f}")
+        y -= 20
+        
+        if y < 80:
+            c.showPage()
+            y = 800
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(40, y, "Date")
+            c.drawString(120, y, "Party Name")
+            c.drawString(280, y, "Item / Part Name")
+            c.drawString(460, y, "Price (Rs)")
+            c.line(40, y-5, 550, y-5)
+            y -= 25
+            c.setFont("Helvetica", 10)
+            
+    c.save()
+    buffer.seek(0)
+    return buffer
+
 # --- SIDEBAR MENU ---
 st.sidebar.title("🏥 Surgicraft Menu")
-menu = st.sidebar.radio("Go to:", ["➕ New Quotation / Bill", "📜 Party History & Search", "⚙️ Master Settings"])
+# NAVU MENU OPTION ADD KARYU CHE:
+menu = st.sidebar.radio("Go to:", ["➕ New Quotation / Bill", "📜 Party History & Search", "🔍 Part Price Finder", "⚙️ Master Settings"])
 
 try: sheet = get_sheet()
 except Exception as e:
@@ -228,7 +270,6 @@ if menu == "➕ New Quotation / Bill":
     party_name = st.text_input("Party Name:", placeholder="Enter customer name...")
     st.write("---")
     
-    # Navo Option: Machine ke Spare Part?
     entry_type = st.radio("What do you want to add?", ["Machine", "Spare Part / Custom Item"], horizontal=True)
     
     if entry_type == "Machine":
@@ -288,7 +329,6 @@ if menu == "➕ New Quotation / Bill":
                     st.toast("Machine Added! ✅")
 
     else:
-        # SPARE PART LOGIC
         st.write("### Add Spare Part Details")
         c1, c2 = st.columns(2)
         part_name = c1.text_input("Part Name / Description (e.g., Heater Coil, Motor Repair)")
@@ -429,7 +469,48 @@ elif menu == "📜 Party History & Search":
                 else: st.warning("Please select a Q_No.")
 
 # ==========================================
-# 3. MASTER SETTINGS PAGE
+# 3. PART PRICE FINDER PAGE (NEW FEATURE)
+# ==========================================
+elif menu == "🔍 Part Price Finder":
+    st.title("Item & Part Price Finder 🔍")
+    st.write("Koi pan party ne past ma kyo part ketla ma apyo hato e ahiya thi check karo.")
+    
+    data = sheet.get_all_records()
+    if not data:
+        st.info("No records found in Google Sheet.")
+    else:
+        df = pd.DataFrame(data)
+        
+        c1, c2 = st.columns(2)
+        search_party_name = c1.text_input("1. Party Name (e.g., Hiral):", placeholder="Enter Party Name...")
+        search_part_name = c2.text_input("2. Part / Item Name (e.g., Motor):", placeholder="Enter Part Name...")
+        
+        filtered_df = df.copy()
+        
+        if search_party_name:
+            filtered_df = filtered_df[filtered_df['Party'].astype(str).str.contains(search_party_name, case=False, na=False)]
+        if search_part_name:
+            filtered_df = filtered_df[filtered_df['Size'].astype(str).str.contains(search_part_name, case=False, na=False)]
+            
+        st.write("### Search Results")
+        
+        if not search_party_name and not search_part_name:
+            st.info("Upar Party nu naam athva Part nu naam lakho etle ahiya details aavse.")
+        elif filtered_df.empty:
+            st.warning("Aa naam thi koi entry mali nathi.")
+        else:
+            display_df = filtered_df[['Date', 'Party', 'Size', 'Speed', 'Total_Price']].copy()
+            display_df.rename(columns={'Size': 'Item / Part Name'}, inplace=True)
+            st.dataframe(display_df, use_container_width=True)
+            
+            # PDF Download option for this specific search
+            if st.button("📄 Download Search Result PDF"):
+                pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
+                file_name = f"PriceSearch_{search_party_name}_{search_part_name}.pdf".replace(" ", "_")
+                st.download_button("📥 Click Here to Download PDF", data=pdf_buffer, file_name=file_name, mime="application/pdf")
+
+# ==========================================
+# 4. MASTER SETTINGS PAGE
 # ==========================================
 elif menu == "⚙️ Master Settings":
     st.title("Master Settings 🔒")
