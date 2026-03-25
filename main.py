@@ -16,7 +16,6 @@ page_icon_path = "logo.png" if os.path.exists("logo.png") else "🏥"
 st.set_page_config(page_title="Surgicraft Industries", page_icon=page_icon_path, layout="wide")
 
 # --- PWA / MOBILE FULL SCREEN THEME FIX ---
-# Aa code browser ni white patti ne kali karva mate che
 st.markdown("""
     <meta name="theme-color" content="#0e1117">
     <meta name="mobile-web-app-capable" content="yes">
@@ -135,7 +134,7 @@ def prepare_display_df(df):
     df['Size'] = df['Size'].apply(format_size)
     return df[['Date', 'Party', 'Size', 'HSN Code', 'Basic Price', 'GST', 'Total_Price']]
 
-# --- IPHONE IN-APP PREVIEW ---
+# --- UNIVERSAL PDF PREVIEW ---
 def display_pdf_in_app(pdf_buffer):
     base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
     pdf_display = f'''
@@ -144,7 +143,8 @@ def display_pdf_in_app(pdf_buffer):
         style="border: 2px solid #ccc; border-radius: 8px;">
         </iframe>
     '''
-    st.markdown("### 📄 PDF Preview (iPhone Mate)")
+    st.markdown("### 📄 PDF Preview")
+    st.markdown("<p style='font-size: 12px; color: gray;'><i>(Nondh: Android mobile ma preview ni jagya e khali dabbo aavi shake che, tya direct Download karvu)</i></p>", unsafe_allow_html=True)
     st.markdown(pdf_display, unsafe_allow_html=True)
 
 # --- HEADER WITH LOGO & RED TEXT ---
@@ -465,9 +465,9 @@ elif menu == "📜 Party History & Edit":
                 
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.download_button("📥 Direct Download (Android/PC)", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf", use_container_width=True)
+                    st.download_button("📥 Download PDF", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf", use_container_width=True)
                 with c2:
-                    if st.button("👁️ View PDF Here (iPhone)", use_container_width=True):
+                    if st.button("👁️ View Preview", use_container_width=True):
                         display_pdf_in_app(hist_pdf)
 
         with tab2:
@@ -640,9 +640,9 @@ elif menu == "🔍 Part Price Finder":
             
             c1, c2 = st.columns(2)
             with c1:
-                st.download_button("📥 Direct Download (Android/PC)", data=pdf_buffer, file_name="PriceSearch_Result.pdf", mime="application/pdf", use_container_width=True)
+                st.download_button("📥 Download PDF", data=pdf_buffer, file_name="PriceSearch_Result.pdf", mime="application/pdf", use_container_width=True)
             with c2:
-                if st.button("👁️ View PDF Here (iPhone)", use_container_width=True):
+                if st.button("👁️ View Preview", use_container_width=True):
                     display_pdf_in_app(pdf_buffer)
 
 # ==========================================
