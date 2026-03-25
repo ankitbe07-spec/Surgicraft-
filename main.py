@@ -28,6 +28,7 @@ DEF_SETTINGS = {
         "LowHighExtra": 12000
     },
     "gst_rates": [5, 12, 18, 28],
+    "hsn_codes": [],
     "tc": "Surgicraft Internal Price List Record."
 }
 
@@ -36,6 +37,7 @@ def load_settings():
         with open(SETTINGS_FILE, "r") as f:
             data = json.load(f)
             if "gst_rates" not in data: data["gst_rates"] = [5, 12, 18, 28]
+            if "hsn_codes" not in data: data["hsn_codes"] = []
             return data
     return DEF_SETTINGS
 
@@ -85,30 +87,42 @@ def format_size_for_ui(size_str):
     return format_size(str(size_str))
 
 def get_spare_details(row_options, total_price):
+    basic, gst, hsn = 0, 0, "None"
     try:
         opts = json.loads(str(row_options))
-        if 'Basic' in opts and 'GST' in opts:
-            return int(opts['Basic']), int(opts['GST'])
+        if isinstance(opts, dict):
+            if 'Basic' in opts: basic = int(opts['Basic'])
+            if 'GST' in opts: gst = int(opts['GST'])
+            if 'HSN' in opts: hsn = str(opts['HSN'])
     except: pass
-    return int(total_price) if pd.notna(total_price) else 0, 0
+    
+    if basic == 0 and gst == 0: 
+        try: basic = int(float(total_price))
+        except: basic = 0
+        
+    return basic, gst, hsn
 
 # --- DATA PROCESSOR FOR DISPLAY TABLES ---
 def prepare_display_df(df):
     basics = []
     gsts = []
+    hsns = []
     for idx, row in df.iterrows():
         if str(row['Speed']) == 'Spare Part':
-            b, g = get_spare_details(row.get('Options', '{}'), row.get('Total_Price', 0))
+            b, g, h = get_spare_details(row.get('Options', '{}'), row.get('Total_Price', 0))
             basics.append(b)
             gsts.append(f"{g}%" if g > 0 else "-")
+            hsns.append(h if h and h != "None" else "-")
         else:
             basics.append("-")
             gsts.append("-")
+            hsns.append("-")
+            
+    df['HSN Code'] = hsns
     df['Basic Price'] = basics
     df['GST'] = gsts
-    # Format size
     df['Size'] = df['Size'].apply(format_size)
-    return df[['Date', 'Party', 'Size', 'Basic Price', 'GST', 'Total_Price']]
+    return df[['Date', 'Party', 'Size', 'HSN Code', 'Basic Price', 'GST', 'Total_Price']]
 
 # --- IPHONE IN-APP PREVIEW ---
 def display_pdf_in_app(pdf_buffer):
@@ -164,10 +178,11 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
         c.drawString(40, y, date_str)
         
         if speed_str == "Spare Part":
-            basic, gst = get_spare_details(row.get('Options', '{}'), total_price)
-            gst_txt = f" (Basic: {basic} | GST: {gst}%)" if gst > 0 else f" (Basic: {basic})"
+            basic, gst, hsn = get_spare_details(row.get('Options', '{}'), total_price)
+            hsn_txt = f" | HSN: {hsn}" if hsn and hsn != "None" else ""
+            gst_txt = f" (Basic: {basic}{hsn_txt} | GST: {gst}%)" if gst > 0 else f" (Basic: {basic}{hsn_txt})"
             part_display = f"Part: {size_str}{gst_txt}"
-            if len(part_display) > 65: part_display = part_display[:62] + "..."
+            if len(part_display) > 70: part_display = part_display[:67] + "..."
             
             c.drawString(110, y, part_display)
             c.drawString(460, y, f"{total_price:,.2f}")
@@ -250,10 +265,11 @@ def create_part_search_pdf(party_name, part_name, df):
         c.drawString(110, y, party_str)
 
         if speed_str == "Spare Part":
-            basic, gst = get_spare_details(row.get('Options', '{}'), total_price)
-            gst_txt = f" (Basic: {basic} | GST: {gst}%)" if gst > 0 else f" (Basic: {basic})"
+            basic, gst, hsn = get_spare_details(row.get('Options', '{}'), total_price)
+            hsn_txt = f" | HSN: {hsn}" if hsn and hsn != "None" else ""
+            gst_txt = f" (Basic: {basic}{hsn_txt} | GST: {gst}%)" if gst > 0 else f" (Basic: {basic}{hsn_txt})"
             part_display = f"Part: {size_str}{gst_txt}"
-            if len(part_display) > 48: part_display = part_display[:45] + "..."
+            if len(part_display) > 50: part_display = part_display[:47] + "..."
             
             c.drawString(230, y, part_display)
             c.drawString(470, y, f"{total_price:,.2f}")
@@ -388,21 +404,24 @@ if menu == "➕ Add New Entry":
             st.write(" ") 
             basic_price = st.number_input("Basic Price (Rs)", min_value=0, step=100)
             
-        c3, c4 = st.columns(2)
+        c3, c4, c5 = st.columns([2, 2, 2])
         with c3:
+            hsn_opts = ["None"] + sorted(settings.get("hsn_codes", []))
+            hsn_val = st.selectbox("HSN Code", hsn_opts)
+        with c4:
             gst_options = [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28]))
             gst_rate = st.selectbox("GST (%)", gst_options, format_func=lambda x: f"{x}%" if x > 0 else "None (0%)")
-        with c4:
+        with c5:
             st.write(" ") 
             final_calc_price = basic_price + (basic_price * gst_rate / 100)
-            st.info(f"**Final Price (with GST): Rs. {final_calc_price:,.2f}**")
+            st.info(f"**Final Price: Rs. {final_calc_price:,.2f}**")
         
         if st.button("➕ SAVE PART TO SHEET", type="primary"):
             if not party_name: st.warning("Please enter Party Name first!")
             elif not part_name or final_calc_price <= 0: st.warning("Please enter Part Name and Price!")
             else:
                 dt = datetime.now().strftime("%d-%m-%Y")
-                options_json = json.dumps({"Basic": basic_price, "GST": gst_rate})
+                options_json = json.dumps({"Basic": basic_price, "GST": gst_rate, "HSN": hsn_val})
                 sheet.append_row([st.session_state.q_no, party_name, dt, part_name, "Spare Part", options_json, final_calc_price])
                 st.toast(f"{format_size(part_name)} Saved for {party_name}! ✅")
                 st.cache_resource.clear()
@@ -427,14 +446,12 @@ elif menu == "📜 Party History & Edit":
             if pdf_party != "-- Select Party --":
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
                 
-                # --- PREPARE DATA WITH BASIC & GST FOR UI TABLE ---
                 display_party_df = prepare_display_df(party_df)
                 st.dataframe(display_party_df.rename(columns={'Item/Machine':'Item/Part Name', 'Total_Price':'Final Price (Rs)'}), use_container_width=True)
                 
                 st.write("---")
                 hist_pdf = create_history_pdf(pdf_party, party_df, "Lifetime Record")
                 
-                # --- SIDE-BY-SIDE BUTTONS ---
                 c1, c2 = st.columns(2)
                 with c1:
                     st.download_button("📥 Direct Download (Android/PC)", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf", use_container_width=True)
@@ -462,17 +479,24 @@ elif menu == "📜 Party History & Edit":
                     new_item = st.text_input("Edit Item/Machine Name:", value=row_data['Size'])
                     
                     if is_spare:
-                        old_basic, old_gst = get_spare_details(row_data.get('Options', '{}'), row_data['Total_Price'])
+                        old_basic, old_gst, old_hsn = get_spare_details(row_data.get('Options', '{}'), row_data['Total_Price'])
                         new_basic = st.number_input("Edit Basic Price (Rs):", value=old_basic, step=100)
                         
-                        gst_opts = [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28]))
-                        if old_gst not in gst_opts: gst_opts.append(old_gst); gst_opts.sort()
-                        new_gst = st.selectbox("Edit GST (%):", gst_opts, index=gst_opts.index(old_gst), format_func=lambda x: f"{x}%" if x > 0 else "None (0%)")
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            hsn_opts = ["None"] + sorted(settings.get("hsn_codes", []))
+                            if old_hsn and old_hsn not in hsn_opts: hsn_opts.append(old_hsn); hsn_opts.sort()
+                            hsn_index = hsn_opts.index(old_hsn) if old_hsn in hsn_opts else 0
+                            new_hsn = st.selectbox("Edit HSN Code:", hsn_opts, index=hsn_index)
+                        with c2:
+                            gst_opts = [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28]))
+                            if old_gst not in gst_opts: gst_opts.append(old_gst); gst_opts.sort()
+                            new_gst = st.selectbox("Edit GST (%):", gst_opts, index=gst_opts.index(old_gst), format_func=lambda x: f"{x}%" if x > 0 else "None (0%)")
                         
                         new_price = new_basic + (new_basic * new_gst / 100)
                         st.info(f"**New Final Price: Rs. {new_price:,.2f}**")
                     else:
-                        new_price = st.number_input("Edit Total Price (Rs):", value=int(row_data['Total_Price']), step=100)
+                        new_price = st.number_input("Edit Total Price (Rs):", value=int(float(row_data['Total_Price'])), step=100)
                     
                     if st.button("💾 Update Record in Sheet", type="primary"):
                         all_values = sheet.get_all_values()
@@ -480,10 +504,20 @@ elif menu == "📜 Party History & Edit":
                         
                         for i, row_vals in enumerate(all_values):
                             if i == 0: continue
+                            
+                            # Smart Number Matcher (avoids Row Not Found Error due to decimals)
+                            price_match = False
+                            try:
+                                val1 = float(str(row_vals[6]).replace(',', '').strip())
+                                val2 = float(str(row_data['Total_Price']).replace(',', '').strip())
+                                price_match = abs(val1 - val2) < 0.1
+                            except:
+                                price_match = (str(row_vals[6]).strip() == str(row_data['Total_Price']).strip())
+                                
                             if (row_vals[1].strip().title() == edit_party and 
-                                row_vals[2] == str(row_data['Date']) and 
-                                row_vals[3] == str(row_data['Size']) and 
-                                str(row_vals[6]) == str(row_data['Total_Price'])):
+                                row_vals[2].strip() == str(row_data['Date']).strip() and 
+                                row_vals[3].strip() == str(row_data['Size']).strip() and 
+                                price_match):
                                 row_index_to_update = i + 1 
                                 break
                                 
@@ -491,12 +525,12 @@ elif menu == "📜 Party History & Edit":
                             sheet.update_cell(row_index_to_update, 4, new_item)
                             sheet.update_cell(row_index_to_update, 7, new_price)
                             if is_spare:
-                                sheet.update_cell(row_index_to_update, 6, json.dumps({"Basic": new_basic, "GST": new_gst}))
+                                sheet.update_cell(row_index_to_update, 6, json.dumps({"Basic": new_basic, "GST": new_gst, "HSN": new_hsn}))
                             st.success("Record Updated Successfully!")
                             st.cache_resource.clear()
                             st.rerun()
                         else:
-                            st.error("Row not found. Ensure no identical duplicates exist.")
+                            st.error("Row not found. (Database ma Exact match malyo nathi).")
 
         with tab3:
             st.write("### Delete Record (By Party)")
@@ -517,10 +551,20 @@ elif menu == "📜 Party History & Edit":
                         
                         for i, row_vals in enumerate(all_values):
                             if i == 0: continue
+                            
+                            # Smart Number Matcher 
+                            price_match = False
+                            try:
+                                val1 = float(str(row_vals[6]).replace(',', '').strip())
+                                val2 = float(str(del_row_data['Total_Price']).replace(',', '').strip())
+                                price_match = abs(val1 - val2) < 0.1
+                            except:
+                                price_match = (str(row_vals[6]).strip() == str(del_row_data['Total_Price']).strip())
+                                
                             if (row_vals[1].strip().title() == del_party and 
-                                row_vals[2] == str(del_row_data['Date']) and 
-                                row_vals[3] == str(del_row_data['Size']) and 
-                                str(row_vals[6]) == str(del_row_data['Total_Price'])):
+                                row_vals[2].strip() == str(del_row_data['Date']).strip() and 
+                                row_vals[3].strip() == str(del_row_data['Size']).strip() and 
+                                price_match):
                                 row_index_to_del = i + 1 
                                 break
                                 
@@ -530,7 +574,7 @@ elif menu == "📜 Party History & Edit":
                             st.cache_resource.clear()
                             st.rerun()
                         else:
-                            st.error("Row not found.")
+                            st.error("Row not found. (Database ma Exact match malyo nathi).")
 
 # ==========================================
 # 3. PART PRICE FINDER PAGE 
@@ -578,7 +622,6 @@ elif menu == "🔍 Part Price Finder":
         elif filtered_df.empty:
             st.warning("Aa naam thi koi entry mali nathi.")
         else:
-            # --- NEW UI DISPLAY WITH BASIC AND GST ---
             display_df = prepare_display_df(filtered_df)
             display_df.rename(columns={'Size': 'Item / Part Name', 'Total_Price': 'Final Price (Rs)'}, inplace=True)
             st.dataframe(display_df, use_container_width=True)
@@ -586,7 +629,6 @@ elif menu == "🔍 Part Price Finder":
             st.write("---")
             pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
             
-            # --- SIDE-BY-SIDE BUTTONS ---
             c1, c2 = st.columns(2)
             with c1:
                 st.download_button("📥 Direct Download (Android/PC)", data=pdf_buffer, file_name="PriceSearch_Result.pdf", mime="application/pdf", use_container_width=True)
@@ -607,7 +649,7 @@ elif menu == "⚙️ Master Settings":
         st.stop()
         
     st.success("Access Granted!")
-    tab1, tab2, tab3 = st.tabs(["Machine Prices", "Add-ons", "GST % Options"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Machine Prices", "Add-ons", "GST % Options", "HSN Codes"])
     
     with tab1:
         st.subheader("Edit/Remove Sizes")
@@ -676,3 +718,26 @@ elif menu == "⚙️ Master Settings":
                 save_settings(settings); st.rerun()
             else:
                 st.warning("Aa percentage pahelathi j che.")
+
+    with tab4:
+        st.subheader("Manage HSN Codes")
+        hsn_codes = settings.get("hsn_codes", [])
+        
+        for h in list(hsn_codes):
+            cA, cB = st.columns([3, 1])
+            cA.write(f"**{h}**")
+            if cB.button("❌ Remove", key=f"dhsn_{h}"):
+                hsn_codes.remove(h)
+                settings["hsn_codes"] = hsn_codes
+                save_settings(settings); st.rerun()
+        
+        st.write("---")
+        n_hsn = st.text_input("Add New HSN Code")
+        if st.button("➕ Add New HSN"):
+            if n_hsn and n_hsn not in hsn_codes:
+                hsn_codes.append(n_hsn)
+                hsn_codes.sort()
+                settings["hsn_codes"] = hsn_codes
+                save_settings(settings); st.rerun()
+            elif n_hsn in hsn_codes:
+                st.warning("Aa HSN Code pahelathi j che.")
