@@ -15,6 +15,15 @@ from reportlab.lib.pagesizes import A4
 page_icon_path = "logo.png" if os.path.exists("logo.png") else "🏥"
 st.set_page_config(page_title="Surgicraft Industries", page_icon=page_icon_path, layout="wide")
 
+# --- PWA / MOBILE FULL SCREEN THEME FIX ---
+# Aa code browser ni white patti ne kali karva mate che
+st.markdown("""
+    <meta name="theme-color" content="#0e1117">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+""", unsafe_allow_html=True)
+
 # --- SETTINGS MANAGER ---
 SETTINGS_FILE = "surgicraft_settings.json"
 DEF_SETTINGS = {
