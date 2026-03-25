@@ -11,7 +11,9 @@ import base64
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 
-st.set_page_config(page_title="Surgicraft Price List", layout="wide")
+# --- SET PAGE CONFIG WITH CUSTOM LOGO ---
+page_icon_path = "app.png" if os.path.exists("app.png") else "🏥"
+st.set_page_config(page_title="Surgicraft Industries", page_icon=page_icon_path, layout="wide")
 
 # --- SETTINGS MANAGER ---
 SETTINGS_FILE = "surgicraft_settings.json"
@@ -136,14 +138,15 @@ def display_pdf_in_app(pdf_buffer):
     st.markdown("### 📄 PDF Preview (iPhone Mate)")
     st.markdown(pdf_display, unsafe_allow_html=True)
 
-# --- HEADER WITH LOGO & GREEN TEXT ---
+# --- HEADER WITH LOGO & RED TEXT ---
 def display_header():
     col1, col2 = st.columns([1, 15])
     with col1:
         if os.path.exists("logo.png"):
             st.image("logo.png", width=60)
     with col2:
-        st.markdown("<h1 style='margin-bottom: 0px; padding-bottom: 0px;'>Surgicraft Price List</h1>", unsafe_allow_html=True)
+        # Changed to Red color and "Surgicraft Industries"
+        st.markdown("<h1 style='margin-bottom: 0px; padding-bottom: 0px; color: #FF0000;'>Surgicraft Industries</h1>", unsafe_allow_html=True)
     st.markdown("<p style='color: #00b300; font-weight: bold; margin-top: 0px;'>Created by Ankit Mistry</p>", unsafe_allow_html=True)
     st.write("---")
 
@@ -505,7 +508,6 @@ elif menu == "📜 Party History & Edit":
                         for i, row_vals in enumerate(all_values):
                             if i == 0: continue
                             
-                            # Smart Number Matcher (avoids Row Not Found Error due to decimals)
                             price_match = False
                             try:
                                 val1 = float(str(row_vals[6]).replace(',', '').strip())
@@ -530,7 +532,7 @@ elif menu == "📜 Party History & Edit":
                             st.cache_resource.clear()
                             st.rerun()
                         else:
-                            st.error("Row not found. (Database ma Exact match malyo nathi).")
+                            st.error("Row not found. Ensure no identical duplicates exist.")
 
         with tab3:
             st.write("### Delete Record (By Party)")
@@ -552,7 +554,6 @@ elif menu == "📜 Party History & Edit":
                         for i, row_vals in enumerate(all_values):
                             if i == 0: continue
                             
-                            # Smart Number Matcher 
                             price_match = False
                             try:
                                 val1 = float(str(row_vals[6]).replace(',', '').strip())
@@ -574,7 +575,7 @@ elif menu == "📜 Party History & Edit":
                             st.cache_resource.clear()
                             st.rerun()
                         else:
-                            st.error("Row not found. (Database ma Exact match malyo nathi).")
+                            st.error("Row not found.")
 
 # ==========================================
 # 3. PART PRICE FINDER PAGE 
