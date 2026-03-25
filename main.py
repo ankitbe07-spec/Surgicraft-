@@ -385,7 +385,7 @@ if menu == "➕ Add New Entry":
                 part_name = part_sel
                 
         with c2:
-            st.write(" ") # alignment
+            st.write(" ") 
             basic_price = st.number_input("Basic Price (Rs)", min_value=0, step=100)
             
         c3, c4 = st.columns(2)
@@ -393,7 +393,7 @@ if menu == "➕ Add New Entry":
             gst_options = [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28]))
             gst_rate = st.selectbox("GST (%)", gst_options, format_func=lambda x: f"{x}%" if x > 0 else "None (0%)")
         with c4:
-            st.write(" ") # alignment
+            st.write(" ") 
             final_calc_price = basic_price + (basic_price * gst_rate / 100)
             st.info(f"**Final Price (with GST): Rs. {final_calc_price:,.2f}**")
         
@@ -462,4 +462,217 @@ elif menu == "📜 Party History & Edit":
                     new_item = st.text_input("Edit Item/Machine Name:", value=row_data['Size'])
                     
                     if is_spare:
-                        old_basic, old_gst = get_spare_details(row_data.get('Options', '{}'), row_data['Total_Pric
+                        old_basic, old_gst = get_spare_details(row_data.get('Options', '{}'), row_data['Total_Price'])
+                        new_basic = st.number_input("Edit Basic Price (Rs):", value=old_basic, step=100)
+                        
+                        gst_opts = [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28]))
+                        if old_gst not in gst_opts: gst_opts.append(old_gst); gst_opts.sort()
+                        new_gst = st.selectbox("Edit GST (%):", gst_opts, index=gst_opts.index(old_gst), format_func=lambda x: f"{x}%" if x > 0 else "None (0%)")
+                        
+                        new_price = new_basic + (new_basic * new_gst / 100)
+                        st.info(f"**New Final Price: Rs. {new_price:,.2f}**")
+                    else:
+                        new_price = st.number_input("Edit Total Price (Rs):", value=int(row_data['Total_Price']), step=100)
+                    
+                    if st.button("💾 Update Record in Sheet", type="primary"):
+                        all_values = sheet.get_all_values()
+                        row_index_to_update = -1
+                        
+                        for i, row_vals in enumerate(all_values):
+                            if i == 0: continue
+                            if (row_vals[1].strip().title() == edit_party and 
+                                row_vals[2] == str(row_data['Date']) and 
+                                row_vals[3] == str(row_data['Size']) and 
+                                str(row_vals[6]) == str(row_data['Total_Price'])):
+                                row_index_to_update = i + 1 
+                                break
+                                
+                        if row_index_to_update != -1:
+                            sheet.update_cell(row_index_to_update, 4, new_item)
+                            sheet.update_cell(row_index_to_update, 7, new_price)
+                            if is_spare:
+                                sheet.update_cell(row_index_to_update, 6, json.dumps({"Basic": new_basic, "GST": new_gst}))
+                            st.success("Record Updated Successfully!")
+                            st.cache_resource.clear()
+                            st.rerun()
+                        else:
+                            st.error("Row not found. Ensure no identical duplicates exist.")
+
+        with tab3:
+            st.write("### Delete Record (By Party)")
+            del_party = st.selectbox("1. Select Party:", ["-- Select Party --"] + unique_parties_list, key="del_party")
+            
+            if del_party != "-- Select Party --":
+                del_items = df[df['Clean_Party'] == del_party].copy()
+                del_items['Display'] = del_items['Date'].astype(str) + " | " + del_items['Size'].apply(format_size) + " | Rs. " + del_items['Total_Price'].astype(str)
+                
+                selected_del = st.selectbox("2. Select Item to Delete:", del_items['Display'].tolist())
+                
+                if selected_del:
+                    del_row_data = del_items[del_items['Display'] == selected_del].iloc[0]
+                    
+                    if st.button("❌ Delete Permanently", type="primary"):
+                        all_values = sheet.get_all_values()
+                        row_index_to_del = -1
+                        
+                        for i, row_vals in enumerate(all_values):
+                            if i == 0: continue
+                            if (row_vals[1].strip().title() == del_party and 
+                                row_vals[2] == str(del_row_data['Date']) and 
+                                row_vals[3] == str(del_row_data['Size']) and 
+                                str(row_vals[6]) == str(del_row_data['Total_Price'])):
+                                row_index_to_del = i + 1 
+                                break
+                                
+                        if row_index_to_del != -1:
+                            sheet.delete_rows(row_index_to_del)
+                            st.success("Record Deleted Successfully!")
+                            st.cache_resource.clear()
+                            st.rerun()
+                        else:
+                            st.error("Row not found.")
+
+# ==========================================
+# 3. PART PRICE FINDER PAGE 
+# ==========================================
+elif menu == "🔍 Part Price Finder":
+    display_header()
+    st.write("Party select karo etle automatic ena j parts nu list aavse!")
+    
+    if main_df.empty:
+        st.info("No records found in Google Sheet.")
+    else:
+        df = main_df.copy()
+        df['Clean_Party'] = df['Party'].astype(str).str.strip().str.title()
+        
+        c1, c2 = st.columns(2)
+        search_party_name = c1.selectbox("1. Select Party (Type to search):", ["-- All Parties --"] + unique_parties_list, index=0)
+        
+        if search_party_name != "-- All Parties --":
+            party_specific_parts = sorted(df[df['Clean_Party'] == search_party_name]['Size'].astype(str).str.strip().unique().tolist())
+            search_part_name = c2.selectbox(
+                "2. Select Part / Item (Type to search):", 
+                ["-- All Items --"] + party_specific_parts, 
+                index=0,
+                format_func=format_size_for_ui
+            )
+        else:
+            search_part_name = c2.selectbox(
+                "2. Select Part / Item (Type to search):", 
+                ["-- All Items --"] + all_items_list, 
+                index=0,
+                format_func=format_size_for_ui
+            )
+        
+        filtered_df = df.copy()
+        
+        if search_party_name != "-- All Parties --":
+            filtered_df = filtered_df[filtered_df['Clean_Party'] == search_party_name]
+        if search_part_name != "-- All Items --":
+            filtered_df = filtered_df[filtered_df['Size'].astype(str).str.strip() == search_part_name]
+            
+        st.write("### Search Results")
+        
+        if search_party_name == "-- All Parties --" and search_part_name == "-- All Items --":
+            st.info("Please select a Party or Part Name above to see results.")
+        elif filtered_df.empty:
+            st.warning("Aa naam thi koi entry mali nathi.")
+        else:
+            # --- NEW UI DISPLAY WITH BASIC AND GST ---
+            display_df = prepare_display_df(filtered_df)
+            display_df.rename(columns={'Size': 'Item / Part Name', 'Total_Price': 'Final Price (Rs)'}, inplace=True)
+            st.dataframe(display_df, use_container_width=True)
+            
+            st.write("---")
+            pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
+            
+            # --- SIDE-BY-SIDE BUTTONS ---
+            c1, c2 = st.columns(2)
+            with c1:
+                st.download_button("📥 Direct Download (Android/PC)", data=pdf_buffer, file_name="PriceSearch_Result.pdf", mime="application/pdf", use_container_width=True)
+            with c2:
+                if st.button("👁️ View PDF Here (iPhone)", use_container_width=True):
+                    display_pdf_in_app(pdf_buffer)
+
+# ==========================================
+# 4. MASTER SETTINGS PAGE
+# ==========================================
+elif menu == "⚙️ Master Settings":
+    display_header()
+    st.title("Master Settings 🔒")
+    pwd_input = st.text_input("Enter Master Password:", type="password")
+    
+    if pwd_input != settings.get('password', '1234'):
+        if pwd_input: st.error("❌ Incorrect Password!")
+        st.stop()
+        
+    st.success("Access Granted!")
+    tab1, tab2, tab3 = st.tabs(["Machine Prices", "Add-ons", "GST % Options"])
+    
+    with tab1:
+        st.subheader("Edit/Remove Sizes")
+        prices = settings['prices']
+        for size, price in list(prices.items()):
+            cA, cB, cC = st.columns([2, 2, 1])
+            cA.write(f"**{format_size(size)}**")
+            prices[size] = cB.number_input("Price", value=price, step=1000, key=f"p_{size}", label_visibility="collapsed")
+            if cC.button("❌ Remove", key=f"d_{size}"):
+                del prices[size]; save_settings(settings); st.rerun()
+                    
+        st.write("---")
+        c1, c2, c3 = st.columns(3)
+        n_w = c1.text_input("Width (e.g. 24)")
+        n_l = c2.text_input("Length (e.g. 48)")
+        n_p = c3.number_input("Base Price", value=0, step=1000)
+        if st.button("➕ Add New Size"):
+            if n_w and n_l and n_p > 0:
+                settings['prices'][f"{n_w}x{n_l}"] = n_p
+                save_settings(settings); st.rerun()
+
+    with tab2:
+        st.subheader("Edit/Remove Add-ons")
+        addons = settings['addons']
+        for name, price in list(addons.items()):
+            if name in ["LowHighExtra"]:
+                cA, cB = st.columns([2, 3])
+                cA.write(f"**{name}**")
+                addons[name] = cB.number_input("Price", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
+            else:
+                cA, cB, cC = st.columns([2, 2, 1])
+                cA.write(f"**{name}**")
+                addons[name] = cB.number_input("Price", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
+                if cC.button("❌ Remove", key=f"da_{name}"):
+                    del addons[name]; save_settings(settings); st.rerun()
+                        
+        if st.button("💾 Save Add-on Changes", type="primary"): save_settings(settings); st.success("Updated!")
+        st.write("---")
+        c1, c2 = st.columns(2)
+        new_a = c1.text_input("New Add-on Name")
+        new_p = c2.number_input("Add-on Price", value=0, step=500)
+        if st.button("➕ Add New Option"):
+            if new_a and new_p > 0:
+                settings['addons'][new_a] = new_p
+                save_settings(settings); st.rerun()
+                
+    with tab3:
+        st.subheader("Manage GST Percentages (%)")
+        gst_rates = settings.get("gst_rates", [5, 12, 18, 28])
+        
+        for g in list(gst_rates):
+            cA, cB = st.columns([3, 1])
+            cA.write(f"**{g}%** GST")
+            if cB.button("❌ Remove", key=f"dgst_{g}"):
+                gst_rates.remove(g)
+                settings["gst_rates"] = gst_rates
+                save_settings(settings); st.rerun()
+        
+        st.write("---")
+        n_gst = st.number_input("Add New GST Rate (%)", min_value=1, max_value=100, step=1)
+        if st.button("➕ Add New GST %"):
+            if n_gst not in gst_rates:
+                gst_rates.append(n_gst)
+                gst_rates.sort()
+                settings["gst_rates"] = gst_rates
+                save_settings(settings); st.rerun()
+            else:
+                st.warning("Aa percentage pahelathi j che.")
