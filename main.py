@@ -11,8 +11,8 @@ import base64
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 
-# --- SET PAGE CONFIG WITH CUSTOM LOGO ---
-page_icon_path = "app.png" if os.path.exists("app.png") else "🏥"
+# --- SET PAGE CONFIG WITH EXISTING LOGO ---
+page_icon_path = "logo.png" if os.path.exists("logo.png") else "🏥"
 st.set_page_config(page_title="Surgicraft Industries", page_icon=page_icon_path, layout="wide")
 
 # --- SETTINGS MANAGER ---
@@ -145,7 +145,6 @@ def display_header():
         if os.path.exists("logo.png"):
             st.image("logo.png", width=60)
     with col2:
-        # Changed to Red color and "Surgicraft Industries"
         st.markdown("<h1 style='margin-bottom: 0px; padding-bottom: 0px; color: #FF0000;'>Surgicraft Industries</h1>", unsafe_allow_html=True)
     st.markdown("<p style='color: #00b300; font-weight: bold; margin-top: 0px;'>Created by Ankit Mistry</p>", unsafe_allow_html=True)
     st.write("---")
