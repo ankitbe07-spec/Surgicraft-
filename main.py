@@ -15,9 +15,13 @@ from reportlab.lib.pagesizes import A4
 page_icon_path = "logo.png" if os.path.exists("logo.png") else "🏥"
 st.set_page_config(page_title="Surgicraft Industries", page_icon=page_icon_path, layout="wide")
 
+# --- PWA / APPLE iOS LOGO FIX ---
 st.markdown("""
+    <link rel="apple-touch-icon" href="logo.png">
+    <link rel="icon" type="image/png" href="logo.png">
     <meta name="theme-color" content="#0e1117">
     <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 """, unsafe_allow_html=True)
 
@@ -136,22 +140,53 @@ def get_spare_details(row_options, total_price):
         except: basic = 0
     return basic, gst, hsn
 
-def prepare_display_df(df):
+# --- OLD vs NEW PRICE TRACKER LOGIC ---
+def prepare_display_df_with_history(df):
+    # Chronological sort required to track "old" prices correctly
+    df['DateObj'] = pd.to_datetime(df['Date'], format="%d-%m-%Y", errors='coerce')
+    df = df.sort_values('DateObj')
+
     basics, gsts, hsns = [], [], []
+    old_dates, old_prices = [], []
+    
+    # Dictionary to remember the last time this party bought this item
+    history_tracker = {}
+
     for idx, row in df.iterrows():
+        item_name = str(row['Size']).strip().lower()
+        party_name = str(row['Party']).strip().lower()
+        current_price = row.get('Total_Price', 0)
+        current_date = str(row['Date'])
+        
+        # Unique key for Party + Item
+        tracking_key = f"{party_name}_{item_name}"
+        
+        if tracking_key in history_tracker:
+            old_dates.append(history_tracker[tracking_key]['date'])
+            old_prices.append(history_tracker[tracking_key]['price'])
+        else:
+            old_dates.append("-")
+            old_prices.append("-")
+            
+        history_tracker[tracking_key] = {'date': current_date, 'price': current_price}
+
         if str(row['Speed']) == 'Spare Part':
-            b, g, h = get_spare_details(row.get('Options', '{}'), row.get('Total_Price', 0))
-            basics.append(b)
-            gsts.append(f"{g}%" if g > 0 else "-")
-            hsns.append(h if h and h != "None" else "-")
+            b, g, h = get_spare_details(row.get('Options', '{}'), current_price)
+            basics.append(b); gsts.append(f"{g}%" if g > 0 else "-"); hsns.append(h if h and h != "None" else "-")
         else:
             basics.append("-"); gsts.append("-"); hsns.append("-")
             
+    df['Old Date'] = old_dates
+    df['Old Price'] = old_prices
     df['HSN Code'] = hsns
     df['Basic Price'] = basics
     df['GST'] = gsts
     df['Size'] = df['Size'].apply(format_size)
-    return df[['Date', 'Party', 'Size', 'HSN Code', 'Basic Price', 'GST', 'Total_Price']]
+    
+    # Reverse sort to show newest entries on top of screen
+    df = df.sort_values('DateObj', ascending=False)
+    
+    return df[['Date', 'Old Date', 'Party', 'Size', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']]
 
 # --- SMART FRACTION PARSER & CONVERTER ---
 def parse_smart_size(val_str):
@@ -181,7 +216,7 @@ def mm_to_foot_inch(mm_val):
     inches = total_inches % 12
     return f"{feet} Foot {inches:.1f} Inch"
 
-# --- PDF GENERATOR ---
+# --- PDF GENERATOR (With Apple Safari Support Preview) ---
 def display_pdf_in_app(pdf_buffer):
     base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
     pdf_display = f'''<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="450" type="application/pdf" style="border: 2px solid #ccc; border-radius: 8px;"></iframe>'''
@@ -194,51 +229,70 @@ def draw_grid_lines(c, y_top, y_bot, cols):
     c.line(cols[0], y_bot, cols[-1], y_bot)
     for col in cols: c.line(col, y_top, col, y_bot)
 
+# --- PDF FOR PARTY HISTORY (Includes Old Date & Old Price) ---
 def create_history_pdf(party, records_df, period_str="Lifetime"):
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    c.setFont("Helvetica-Bold", 14); c.drawString(40, 800, f"Surgicraft Price List Record ({period_str})")
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(40, 775, f"Party Name: {party}")
-    c.drawString(400, 775, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
+    # Using Landscape format to fit all columns clearly
+    from reportlab.lib.pagesizes import landscape
+    c = canvas.Canvas(buffer, pagesize=landscape(A4))
+    width, height = landscape(A4)
     
-    y = 740; c.setFont("Helvetica-Bold", 11)
-    c.drawString(45, y+5, "Date"); c.drawString(115, y+5, "Description / Details"); c.drawString(465, y+5, "Final Amt(Rs)")
-    draw_grid_lines(c, y+20, y-5, [40, 110, 460, 550])
-    y -= 25; c.setFont("Helvetica", 10); grand_total = 0
+    c.setFont("Helvetica-Bold", 14); c.drawString(40, height - 40, f"Surgicraft Price List Record ({period_str})")
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, height - 60, f"Party Name: {party}")
+    c.drawString(width - 150, height - 60, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
+    
+    y = height - 90; c.setFont("Helvetica-Bold", 10)
+    # Define columns for Landscape
+    cols = [40, 105, 170, 480, 545, 600, 680, 780]
+    c.drawString(cols[0]+5, y+5, "New Date")
+    c.drawString(cols[1]+5, y+5, "Old Date")
+    c.drawString(cols[2]+5, y+5, "Item Description / Details (With Basic/GST)")
+    c.drawString(cols[3]+5, y+5, "HSN")
+    c.drawString(cols[4]+5, y+5, "Old Price")
+    c.drawString(cols[5]+5, y+5, "New Final Price")
+    
+    draw_grid_lines(c, y+20, y-5, [cols[0], cols[1], cols[2], cols[3], cols[5], cols[7]]) # Adjust outer boundaries
+    y -= 25; c.setFont("Helvetica", 9); grand_total = 0
 
     for index, row in records_df.iterrows():
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
         y_start = y + 15
         
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(45, y, str(row['Date']))
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(cols[0]+5, y, str(row['Date']))
+        c.drawString(cols[1]+5, y, str(row['Old Date']))
+        c.drawString(cols[3]+5, y, str(row['HSN Code'])[:8])
         
+        old_price_str = f"{row['Old Price']:,.2f}" if row['Old Price'] != "-" else "-"
+        c.drawString(cols[4]+5, y, old_price_str)
+        c.drawString(cols[5]+5, y, f"{total_price:,.2f}")
+        
+        c.setFont("Helvetica", 9)
         if str(row['Speed']) == "Spare Part":
-            basic, gst, hsn = get_spare_details(row.get('Options', '{}'), total_price)
-            part_display = f"Part: {format_size(str(row['Size']))} (Basic: {basic} | GST: {gst}%)"
-            c.drawString(115, y, part_display[:65])
-            c.drawString(465, y, f"{total_price:,.2f}")
+            part_display = f"Part: {format_size(str(row['Size']))} (Basic: Rs.{row['Basic Price']} | GST: {row['GST']})"
+            c.drawString(cols[2]+5, y, part_display[:75])
             grand_total += total_price; y -= 20
         else:
-            c.drawString(115, y, f"Machine: {format_size(str(row['Size']))}")
-            c.drawString(465, y, f"{total_price:,.2f}")
+            c.drawString(cols[2]+5, y, f"Machine: {format_size(str(row['Size']))} | Speed: {row['Speed']}")
             y -= 15
-            c.setFont("Helvetica-Oblique", 9)
-            c.drawString(125, y, f"• Speed: {row['Speed']}"); y -= 15
+            c.setFont("Helvetica-Oblique", 8)
             addons_dict = {}
             try: addons_dict = json.loads(row.get('Options', '{}'))
             except: pass
             for name, price in addons_dict.items():
-                c.drawString(125, y, f"• {name}"); y -= 15
-            grand_total += total_price; y -= 10
+                c.drawString(cols[2]+15, y, f"• Add-on: {name}"); y -= 15
+            grand_total += total_price; y -= 5
             
-        draw_grid_lines(c, y_start, y, [40, 110, 460, 550])
+        draw_grid_lines(c, y_start, y, [cols[0], cols[1], cols[2], cols[3], cols[5], cols[7]])
         
         if y < 80:
-            c.showPage(); y = 800; c.setFont("Helvetica-Bold", 11)
-            c.drawString(45, y+5, "Date"); c.drawString(115, y+5, "Description / Details"); c.drawString(465, y+5, "Final Amt(Rs)")
-            draw_grid_lines(c, y+20, y-5, [40, 110, 460, 550]); y -= 25
+            c.showPage(); y = height - 50; c.setFont("Helvetica-Bold", 10)
+            c.drawString(cols[0]+5, y+5, "New Date"); c.drawString(cols[1]+5, y+5, "Old Date")
+            c.drawString(cols[2]+5, y+5, "Item Description / Details")
+            c.drawString(cols[3]+5, y+5, "HSN"); c.drawString(cols[4]+5, y+5, "Old Price")
+            c.drawString(cols[5]+5, y+5, "New Final Price")
+            draw_grid_lines(c, y+20, y-5, [cols[0], cols[1], cols[2], cols[3], cols[5], cols[7]]); y -= 25
         
     c.setFont("Helvetica-Bold", 12); c.drawString(40, y-25, f"{period_str.upper()} TOTAL VALUE: Rs. {grand_total:,.2f}/-")
     c.save(); buffer.seek(0)
@@ -246,36 +300,50 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
 
 def create_part_search_pdf(party_name, part_name, df):
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    c.setFont("Helvetica-Bold", 14); c.drawString(40, 800, "Surgicraft Item / Part Price Report")
-    c.setFont("Helvetica", 11); c.drawString(40, 780, f"Party: {party_name}")
-    c.drawString(40, 765, f"Item/Part: {part_name}"); c.drawString(400, 780, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
+    from reportlab.lib.pagesizes import landscape
+    c = canvas.Canvas(buffer, pagesize=landscape(A4))
+    width, height = landscape(A4)
     
-    y = 730; c.setFont("Helvetica-Bold", 11)
-    c.drawString(45, y+5, "Date"); c.drawString(115, y+5, "Party Name")
-    c.drawString(235, y+5, "Item Details"); c.drawString(475, y+5, "Final Amt")
-    draw_grid_lines(c, y+20, y-5, [40, 110, 230, 470, 550]); y -= 25
+    c.setFont("Helvetica-Bold", 14); c.drawString(40, height-40, "Surgicraft Item / Part Price Report")
+    c.setFont("Helvetica", 11); c.drawString(40, height-60, f"Party Filter: {party_name}")
+    c.drawString(40, height-75, f"Item Filter: {part_name}"); c.drawString(width-150, height-60, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
+    
+    y = height-110; c.setFont("Helvetica-Bold", 10)
+    cols = [40, 105, 170, 320, 520, 570, 640, 780]
+    c.drawString(cols[0]+5, y+5, "New Date"); c.drawString(cols[1]+5, y+5, "Old Date")
+    c.drawString(cols[2]+5, y+5, "Party Name"); c.drawString(cols[3]+5, y+5, "Item Details")
+    c.drawString(cols[4]+5, y+5, "HSN"); c.drawString(cols[5]+5, y+5, "Old Price")
+    c.drawString(cols[6]+5, y+5, "New Price")
+    draw_grid_lines(c, y+20, y-5, [cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7]]); y -= 25
     
     for index, row in df.iterrows():
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
         y_start = y + 15
         c.setFont("Helvetica-Bold", 9)
-        c.drawString(45, y, str(row['Date'])); c.drawString(115, y, str(row['Party'])[:18])
+        c.drawString(cols[0]+5, y, str(row['Date'])); c.drawString(cols[1]+5, y, str(row['Old Date']))
+        c.drawString(cols[2]+5, y, str(row['Party'])[:22])
+        c.drawString(cols[4]+5, y, str(row['HSN Code'])[:8])
+        
+        old_price_str = f"{row['Old Price']:,.2f}" if row['Old Price'] != "-" else "-"
+        c.drawString(cols[5]+5, y, old_price_str)
+        c.drawString(cols[6]+5, y, f"{total_price:,.2f}")
 
+        c.setFont("Helvetica", 9)
         if str(row['Speed']) == "Spare Part":
-            c.drawString(235, y, f"Part: {format_size(str(row['Size']))}")[:45]
-            c.drawString(475, y, f"{total_price:,.2f}"); y -= 20
+            c.drawString(cols[3]+5, y, f"Part: {format_size(str(row['Size']))}")[:40]
+            y -= 20
         else:
-            c.drawString(235, y, f"Machine: {format_size(str(row['Size']))}")
-            c.drawString(475, y, f"{total_price:,.2f}"); y -= 15
-            c.setFont("Helvetica-Oblique", 9); c.drawString(245, y, f"• {row['Speed']}"); y -= 25
+            c.drawString(cols[3]+5, y, f"Machine: {format_size(str(row['Size']))}")
+            y -= 15
+            c.setFont("Helvetica-Oblique", 8); c.drawString(cols[3]+15, y, f"• {row['Speed']}"); y -= 15
             
-        draw_grid_lines(c, y_start, y, [40, 110, 230, 470, 550])
+        draw_grid_lines(c, y_start, y, [cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7]])
         if y < 80:
-            c.showPage(); y = 800; c.setFont("Helvetica-Bold", 11)
-            c.drawString(45, y+5, "Date"); c.drawString(115, y+5, "Party Name")
-            c.drawString(235, y+5, "Item Details"); c.drawString(475, y+5, "Final Amt")
-            draw_grid_lines(c, y+20, y-5, [40, 110, 230, 470, 550]); y -= 25
+            c.showPage(); y = height-50; c.setFont("Helvetica-Bold", 10)
+            c.drawString(cols[0]+5, y+5, "New Date"); c.drawString(cols[1]+5, y+5, "Old Date"); c.drawString(cols[2]+5, y+5, "Party Name")
+            c.drawString(cols[3]+5, y+5, "Item Details"); c.drawString(cols[4]+5, y+5, "HSN")
+            c.drawString(cols[5]+5, y+5, "Old Price"); c.drawString(cols[6]+5, y+5, "New Price")
+            draw_grid_lines(c, y+20, y-5, [cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7]]); y -= 25
             
     c.save(); buffer.seek(0); return buffer
 
@@ -491,7 +559,6 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                         with c_pv: 
                             if st.button(f"👁️ View Preview", key=f"pv_{mat}", use_container_width=True): display_pdf_in_app(pdf_buf)
 
-    # NEW: TAB 4 FOR EDIT & DELETE IN HEXO CUTTING
     with htab4:
         st.write("**✏️ Edit ke Delete Karo (Hexo & Stock):**")
         edit_type = st.radio("Shu sudharvu che?", ["✂️ Cutting Entry (Stock Out)", "📥 Stock Entry (Navo Maal)"], horizontal=True)
@@ -546,7 +613,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                             if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Material Name']) and str(r[2]) == str(r_d['Cut Size']) and str(r[3]) == str(r_d['Quantity']):
                                 sheet_hexo.delete_rows(i+1); st.success("Deleted Successfully!"); st.cache_resource.clear(); st.rerun(); break
 
-        else: # Edit Stock Entry
+        else:
             if stock_df.empty:
                 st.info("Koi stock entry nathi.")
             else:
@@ -742,7 +809,15 @@ elif menu == "📜 Party History & Edit":
             pdf_party = st.selectbox("Select Party:", ["-- Select Party --"] + unique_parties_list)
             if pdf_party != "-- Select Party --":
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
-                st.dataframe(prepare_display_df(party_df), use_container_width=True)
+                
+                # Use the new Old/New logic function
+                display_df = prepare_display_df_with_history(party_df)
+                
+                # Display nicely on screen
+                display_df.rename(columns={'Total_Price': 'New Final Price(Rs)'}, inplace=True)
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                
+                # Download PDF with Landscape format
                 hist_pdf = create_history_pdf(pdf_party, party_df, "Lifetime Record")
                 c1, c2 = st.columns(2)
                 with c1: st.download_button("📥 Download PDF", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf", use_container_width=True)
@@ -815,7 +890,11 @@ elif menu == "🔍 Part Price Finder":
         if filtered_df.empty: st.warning("No entries found.")
         elif search_party_name == "-- All Parties --" and search_part_name == "-- All Items --": st.info("Select to search.")
         else:
-            st.dataframe(prepare_display_df(filtered_df), use_container_width=True)
+            # Use the History Tracking DF here as well to see Old Prices!
+            display_df = prepare_display_df_with_history(filtered_df)
+            display_df.rename(columns={'Total_Price': 'New Final Price(Rs)'}, inplace=True)
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            
             pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
             c1, c2 = st.columns(2)
             with c1: st.download_button("📥 Download PDF", data=pdf_buffer, file_name="Search_Result.pdf", mime="application/pdf", use_container_width=True)
