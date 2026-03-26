@@ -4,14 +4,13 @@ from google.oauth2.service_account import Credentials
 import json
 import os
 from datetime import datetime
-import calendar
 import pandas as pd
 import io
 import base64
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 
-# --- SET PAGE CONFIG WITH EXISTING LOGO ---
+# --- SET PAGE CONFIG WITH LOGO ---
 page_icon_path = "logo.png" if os.path.exists("logo.png") else "🏥"
 st.set_page_config(page_title="Surgicraft Industries", page_icon=page_icon_path, layout="wide")
 
@@ -64,33 +63,37 @@ if 'q_no' not in st.session_state: st.session_state.q_no = f"SUR/{datetime.now()
 # --- GOOGLE SHEETS CONNECTION ---
 @st.cache_resource
 def get_sheets():
-    info = json.loads(st.secrets["google_key"])
-    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_info(info, scopes=scope)
-    client = gspread.authorize(creds)
-    db = client.open("Surgicraft_Database")
-    
-    try: sheet_main = db.worksheet("Sheet1")
-    except: sheet_main = db.sheet1
-    
-    try: sheet_factory = db.worksheet("Factory_Data")
-    except: 
-        sheet_factory = db.add_worksheet(title="Factory_Data", rows="1000", cols="10")
-        sheet_factory.append_row(["Date", "Raw Material", "Part Name", "Cutting Size", "Quantity"])
+    try:
+        info = json.loads(st.secrets["google_key"])
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(info, scopes=scope)
+        client = gspread.authorize(creds)
+        db = client.open("Surgicraft_Database")
         
-    try: sheet_stock = db.worksheet("Master_Stock")
-    except:
-        sheet_stock = db.add_worksheet(title="Master_Stock", rows="1000", cols="10")
-        sheet_stock.append_row(["Date", "Material Name", "Total Length (Foot)", "Total Length (MM)", "Weight (KG)"])
+        try: sheet_main = db.worksheet("Sheet1")
+        except: sheet_main = db.sheet1
         
-    try: sheet_hexo = db.worksheet("Hexo_Cutting")
-    except:
-        sheet_hexo = db.add_worksheet(title="Hexo_Cutting", rows="1000", cols="10")
-        sheet_hexo.append_row(["Date", "Material Name", "Cut Size (MM)", "Quantity", "Blade Margin (MM)", "Total Used (MM)"])
-        
-    return sheet_main, sheet_factory, sheet_stock, sheet_hexo
+        try: sheet_factory = db.worksheet("Factory_Data")
+        except: 
+            sheet_factory = db.add_worksheet(title="Factory_Data", rows="1000", cols="10")
+            sheet_factory.append_row(["Date", "Raw Material", "Part Name", "Cutting Size", "Quantity"])
+            
+        try: sheet_stock = db.worksheet("Master_Stock")
+        except:
+            sheet_stock = db.add_worksheet(title="Master_Stock", rows="1000", cols="10")
+            sheet_stock.append_row(["Date", "Material Name", "Total Length (Foot)", "Total Length (MM)", "Weight (KG)"])
+            
+        try: sheet_hexo = db.worksheet("Hexo_Cutting")
+        except:
+            sheet_hexo = db.add_worksheet(title="Hexo_Cutting", rows="1000", cols="10")
+            sheet_hexo.append_row(["Date", "Material Name", "Cut Size", "Quantity", "Blade Margin (MM)", "Total Used (MM)"])
+            
+        return sheet_main, sheet_factory, sheet_stock, sheet_hexo
+    except Exception as e:
+        st.error(f"Google Sheet Connection Error: {e}")
+        st.stop()
 
-# Fetch data early
+# --- FETCH DATA ---
 try:
     sheet_main, sheet_factory, sheet_stock, sheet_hexo = get_sheets()
     
@@ -108,18 +111,16 @@ try:
     stock_df = pd.DataFrame(sheet_stock.get_all_records()) if sheet_stock.get_all_records() else pd.DataFrame()
     hexo_df = pd.DataFrame(sheet_hexo.get_all_records()) if sheet_hexo.get_all_records() else pd.DataFrame()
     
-    stock_materials = stock_df['Material Name'].astype(str).str.strip().unique().tolist() if not stock_df.empty else []
-    
+    stock_materials_full = sorted(stock_df['Material Name'].astype(str).str.strip().unique().tolist()) if not stock_df.empty else []
 except Exception as e:
-    st.error(f"Google Sheet Connection Error! Error: {e}")
+    st.error(f"Error reading data: {e}")
     st.stop()
 
 # --- HELPER FORMAT FUNCTIONS ---
 def format_size(size_str):
     if "x" in size_str:
         parts = size_str.split('x')
-        if len(parts) == 2 and parts[0].strip().isdigit():
-            return f'{parts[0].strip()}" x {parts[1].strip()}"'
+        if len(parts) == 2 and parts[0].strip().isdigit(): return f'{parts[0].strip()}" x {parts[1].strip()}"'
     return size_str
 
 def format_size_for_ui(size_str):
@@ -157,7 +158,32 @@ def prepare_display_df(df):
     df['Size'] = df['Size'].apply(format_size)
     return df[['Date', 'Party', 'Size', 'HSN Code', 'Basic Price', 'GST', 'Total_Price']]
 
-# --- UNIVERSAL PDF PREVIEW ---
+# --- SMART UNIT CONVERTER HELPER ---
+def parse_smart_size(val_str):
+    val_str = str(val_str).replace('"', '').replace('inch', '').replace('mm', '').strip()
+    try:
+        if " " in val_str and "/" in val_str:
+            parts = val_str.split(" ")
+            return float(parts[0]) + (float(parts[1].split('/')[0]) / float(parts[1].split('/')[1]))
+        elif "/" in val_str:
+            return float(val_str.split('/')[0]) / float(val_str.split('/')[1])
+        else:
+            return float(val_str)
+    except:
+        return -1.0
+
+def convert_to_mm(val, unit):
+    if unit == "Foot": return val * 304.8
+    elif unit == "Inch": return val * 25.4
+    else: return val
+
+def mm_to_foot_inch(mm_val):
+    total_inches = mm_val / 25.4
+    feet = int(total_inches // 12)
+    inches = total_inches % 12
+    return f"{feet} Foot {inches:.1f} Inch"
+
+# --- PDF GENERATORS (Excel Style) ---
 def display_pdf_in_app(pdf_buffer):
     base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
     pdf_display = f'''
@@ -170,25 +196,13 @@ def display_pdf_in_app(pdf_buffer):
     st.warning("📱 **Android Users:** Jo ahiya PDF empty (safed dabbo) dekhay, to upar thi **'Download PDF'** button dabavi ne open karo.")
     st.markdown(pdf_display, unsafe_allow_html=True)
 
-# --- HEADER WITH LOGO & RED TEXT ---
-def display_header():
-    col1, col2 = st.columns([1, 15])
-    with col1:
-        if os.path.exists("logo.png"):
-            st.image("logo.png", width=60)
-    with col2:
-        st.markdown("<h1 style='margin-bottom: 0px; padding-bottom: 0px; color: #FF0000;'>Surgicraft Industries</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color: #00b300; font-weight: bold; margin-top: 0px;'>Created by Ankit Mistry</p>", unsafe_allow_html=True)
-    st.write("---")
+def draw_grid_lines(c, y_top, y_bot, cols):
+    c.setLineWidth(0.5)
+    c.line(cols[0], y_top, cols[-1], y_top)
+    c.line(cols[0], y_bot, cols[-1], y_bot)
+    for col in cols:
+        c.line(col, y_top, col, y_bot)
 
-# --- CONVERTER HELPER ---
-def mm_to_foot_inch(mm_val):
-    total_inches = mm_val / 25.4
-    feet = int(total_inches // 12)
-    inches = total_inches % 12
-    return f"{feet} Foot {inches:.1f} Inch"
-
-# --- PDF GENERATOR (History) ---
 def create_history_pdf(party, records_df, period_str="Lifetime"):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -198,171 +212,104 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
     c.drawString(400, 775, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
     y = 740; c.setFont("Helvetica-Bold", 11)
-    c.drawString(40, y, "Date"); c.drawString(110, y, "Description / Details"); c.drawString(460, y, "Final Amt(Rs)")
-    c.line(40, y-5, 550, y-5)
-    
-    y -= 25; c.setFont("Helvetica", 11); grand_total = 0
-    try:
-        records_df['DateObj'] = pd.to_datetime(records_df['Date'], format="%d-%m-%Y", errors='coerce')
-        records_df = records_df.sort_values('DateObj')
-    except: pass
+    c.drawString(45, y+5, "Date"); c.drawString(115, y+5, "Description / Details"); c.drawString(465, y+5, "Final Amt(Rs)")
+    draw_grid_lines(c, y+20, y-5, [40, 110, 460, 550])
+    y -= 25; c.setFont("Helvetica", 10); grand_total = 0
 
     for index, row in records_df.iterrows():
-        date_str = str(row['Date'])
-        size_str = format_size(str(row['Size']))
-        speed_str = str(row['Speed'])
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
+        y_start = y + 15
         
         c.setFont("Helvetica-Bold", 10)
-        c.drawString(40, y, date_str)
+        c.drawString(45, y, str(row['Date']))
         
-        if speed_str == "Spare Part":
+        if str(row['Speed']) == "Spare Part":
             basic, gst, hsn = get_spare_details(row.get('Options', '{}'), total_price)
-            hsn_txt = f" | HSN: {hsn}" if hsn and hsn != "None" else ""
-            gst_txt = f" (Basic: {basic}{hsn_txt} | GST: {gst}%)" if gst > 0 else f" (Basic: {basic}{hsn_txt})"
-            part_display = f"Part: {size_str}{gst_txt}"
-            if len(part_display) > 70: part_display = part_display[:67] + "..."
-            
-            c.drawString(110, y, part_display)
-            c.drawString(460, y, f"{total_price:,.2f}")
+            part_display = f"Part: {format_size(str(row['Size']))} (Basic: {basic} | GST: {gst}%)"
+            c.drawString(115, y, part_display[:65])
+            c.drawString(465, y, f"{total_price:,.2f}")
             grand_total += total_price; y -= 20
         else:
-            base_price = int(settings['prices'].get(str(row['Size']), 0))
-            c.drawString(110, y, f"Machine: {size_str}")
-            if base_price > 0: c.drawString(460, y, f"{base_price:,.2f}")
-            else: c.drawString(460, y, f"{total_price:,.2f}")
-            y -= 16
+            c.drawString(115, y, f"Machine: {format_size(str(row['Size']))}")
+            c.drawString(465, y, f"{total_price:,.2f}")
+            y -= 15
+            c.setFont("Helvetica-Oblique", 9)
+            c.drawString(125, y, f"• Speed: {row['Speed']}"); y -= 15
             
-            c.setFont("Helvetica-Oblique", 10)
-            c.drawString(120, y, f"• Speed: {speed_str}")
-            y -= 16
-            
-            raw_addons = row.get('Options', '{}')
             addons_dict = {}
-            if isinstance(raw_addons, str):
-                try: addons_dict = json.loads(raw_addons)
-                except: addons_dict = {raw_addons: 0}
-            elif isinstance(raw_addons, dict): addons_dict = raw_addons
-
+            try: addons_dict = json.loads(row.get('Options', '{}'))
+            except: pass
             for name, price in addons_dict.items():
-                p_val = int(price) if price else 0
-                c.drawString(120, y, f"• {name}")
-                if p_val > 0: c.drawString(460, y, f"{p_val:,.2f}")
-                y -= 16
-                
-            c.setFont("Helvetica-Bold", 10)
-            c.drawString(120, y, "Total Price:")
-            c.drawString(460, y, f"{total_price:,.2f}")
-            grand_total += total_price; y -= 25
+                c.drawString(125, y, f"• {name}"); y -= 15
+            grand_total += total_price; y -= 10
+            
+        draw_grid_lines(c, y_start, y, [40, 110, 460, 550])
         
         if y < 80:
             c.showPage(); y = 800; c.setFont("Helvetica-Bold", 11)
-            c.drawString(40, y, "Date"); c.drawString(110, y, "Description / Details"); c.drawString(460, y, "Final Amt(Rs)")
-            c.line(40, y-5, 550, y-5); y -= 25
+            c.drawString(45, y+5, "Date"); c.drawString(115, y+5, "Description / Details"); c.drawString(465, y+5, "Final Amt(Rs)")
+            draw_grid_lines(c, y+20, y-5, [40, 110, 460, 550]); y -= 25
         
-    c.line(40, y-5, 550, y-5)
     c.setFont("Helvetica-Bold", 12); c.drawString(40, y-25, f"{period_str.upper()} TOTAL VALUE: Rs. {grand_total:,.2f}/-")
     c.save(); buffer.seek(0)
     return buffer
 
-# --- PDF GENERATOR (Search) ---
 def create_part_search_pdf(party_name, part_name, df):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     c.setFont("Helvetica-Bold", 14)
     c.drawString(40, 800, "Surgicraft Item / Part Price Report")
     c.setFont("Helvetica", 11)
-    c.drawString(40, 780, f"Party: {party_name if party_name and party_name != '-- All Parties --' else 'All Parties'}")
-    c.drawString(40, 765, f"Item/Part: {format_size(part_name) if part_name and part_name != '-- All Items --' else 'All Items'}")
+    c.drawString(40, 780, f"Party: {party_name}")
+    c.drawString(40, 765, f"Item/Part: {part_name}")
     c.drawString(400, 780, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
     y = 730; c.setFont("Helvetica-Bold", 11)
-    c.drawString(40, y, "Date"); c.drawString(110, y, "Party Name")
-    c.drawString(230, y, "Item / Machine Details"); c.drawString(470, y, "Final Amt(Rs)")
-    c.line(40, y-5, 550, y-5); y -= 25; c.setFont("Helvetica", 10)
+    c.drawString(45, y+5, "Date"); c.drawString(115, y+5, "Party Name")
+    c.drawString(235, y+5, "Item Details"); c.drawString(475, y+5, "Final Amt")
+    draw_grid_lines(c, y+20, y-5, [40, 110, 230, 470, 550]); y -= 25
     
     for index, row in df.iterrows():
-        date_str = str(row['Date'])
-        party_str = str(row['Party'])[:20]
-        size_str = format_size(str(row['Size']))
-        speed_str = str(row.get('Speed', ''))
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
+        y_start = y + 15
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(45, y, str(row['Date'])); c.drawString(115, y, str(row['Party'])[:18])
 
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(40, y, date_str); c.drawString(110, y, party_str)
-
-        if speed_str == "Spare Part":
-            basic, gst, hsn = get_spare_details(row.get('Options', '{}'), total_price)
-            hsn_txt = f" | HSN: {hsn}" if hsn and hsn != "None" else ""
-            gst_txt = f" (Basic: {basic}{hsn_txt} | GST: {gst}%)" if gst > 0 else f" (Basic: {basic}{hsn_txt})"
-            part_display = f"Part: {size_str}{gst_txt}"
-            if len(part_display) > 50: part_display = part_display[:47] + "..."
-            c.drawString(230, y, part_display); c.drawString(470, y, f"{total_price:,.2f}")
-            y -= 20
+        if str(row['Speed']) == "Spare Part":
+            c.drawString(235, y, f"Part: {format_size(str(row['Size']))}")[:45]
+            c.drawString(475, y, f"{total_price:,.2f}"); y -= 20
         else:
-            base_price = int(settings['prices'].get(str(row['Size']), 0))
-            c.drawString(230, y, f"Machine: {size_str}")
-            if base_price > 0: c.drawString(470, y, f"{base_price:,.2f}")
-            else: c.drawString(470, y, f"{total_price:,.2f}")
-            y -= 16
-
-            c.setFont("Helvetica-Oblique", 10)
-            c.drawString(240, y, f"• Speed: {speed_str}"); y -= 16
-
-            raw_addons = row.get('Options', '{}')
-            addons_dict = {}
-            if isinstance(raw_addons, str):
-                try: addons_dict = json.loads(raw_addons)
-                except: addons_dict = {raw_addons: 0}
-            elif isinstance(raw_addons, dict): addons_dict = raw_addons
-
-            for name, price in addons_dict.items():
-                p_val = int(price) if price else 0
-                c.drawString(240, y, f"• {name}")
-                if p_val > 0: c.drawString(470, y, f"{p_val:,.2f}")
-                y -= 16
-
-            c.setFont("Helvetica-Bold", 10)
-            c.drawString(240, y, "Total Price:"); c.drawString(470, y, f"{total_price:,.2f}")
-            y -= 25
+            c.drawString(235, y, f"Machine: {format_size(str(row['Size']))}")
+            c.drawString(475, y, f"{total_price:,.2f}"); y -= 15
+            c.setFont("Helvetica-Oblique", 9)
+            c.drawString(245, y, f"• {row['Speed']}"); y -= 15
+            y -= 10
+            
+        draw_grid_lines(c, y_start, y, [40, 110, 230, 470, 550])
         
         if y < 80:
             c.showPage(); y = 800; c.setFont("Helvetica-Bold", 11)
-            c.drawString(40, y, "Date"); c.drawString(110, y, "Party Name")
-            c.drawString(230, y, "Item / Machine Details"); c.drawString(470, y, "Final Amt(Rs)")
-            c.line(40, y-5, 550, y-5); y -= 25; c.setFont("Helvetica", 10)
+            c.drawString(45, y+5, "Date"); c.drawString(115, y+5, "Party Name")
+            c.drawString(235, y+5, "Item Details"); c.drawString(475, y+5, "Final Amt")
+            draw_grid_lines(c, y+20, y-5, [40, 110, 230, 470, 550]); y -= 25
             
     c.save(); buffer.seek(0)
     return buffer
 
-# --- FACTORY PDF GENERATOR (EXCEL GRID STYLE) ---
 def create_factory_pdf(raw_material, search_part, df):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
-    
     c.setFont("Helvetica-Bold", 14)
     c.drawString(40, 800, "Surgicraft Factory Production & Cutting List")
     c.setFont("Helvetica", 10)
-    if raw_material and raw_material != "-- All Materials --": c.drawString(40, 780, f"Material Filter: {raw_material}")
-    else: c.drawString(40, 780, "Material Filter: All")
-        
-    if search_part and search_part != "-- All Parts --": c.drawString(220, 780, f"Part Filter: {search_part}")
-    else: c.drawString(220, 780, f"Part Filter: All")
-        
+    c.drawString(40, 780, f"Material Filter: {raw_material}")
+    c.drawString(220, 780, f"Part Filter: {search_part}")
     c.drawString(420, 780, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
-    y = 740
-    c.setFont("Helvetica-Bold", 10)
+    y = 740; c.setFont("Helvetica-Bold", 10)
     c.drawString(45, y+5, "Date"); c.drawString(105, y+5, "Raw Material"); c.drawString(235, y+5, "Part Name")
     c.drawString(405, y+5, "Cutting Size"); c.drawString(505, y+5, "Qty")
-    
-    def draw_grid_lines(y_top, y_bot):
-        c.line(40, y_top, 550, y_top); c.line(40, y_bot, 550, y_bot)
-        c.line(40, y_top, 40, y_bot); c.line(100, y_top, 100, y_bot)
-        c.line(230, y_top, 230, y_bot); c.line(400, y_top, 400, y_bot)
-        c.line(500, y_top, 500, y_bot); c.line(550, y_top, 550, y_bot)
-
-    draw_grid_lines(y+20, y)
+    draw_grid_lines(c, y+20, y, [40, 100, 230, 400, 500, 550])
     
     row_h = 25
     for index, row in df.iterrows():
@@ -371,89 +318,72 @@ def create_factory_pdf(raw_material, search_part, df):
             c.showPage(); y = 800; c.setFont("Helvetica-Bold", 10)
             c.drawString(45, y+5, "Date"); c.drawString(105, y+5, "Raw Material"); c.drawString(235, y+5, "Part Name")
             c.drawString(405, y+5, "Cutting Size"); c.drawString(505, y+5, "Qty")
-            draw_grid_lines(y+20, y); y -= row_h
+            draw_grid_lines(c, y+20, y, [40, 100, 230, 400, 500, 550]); y -= row_h
             
-        c.setFont("Helvetica", 10)
+        c.setFont("Helvetica", 9)
         c.drawString(45, y+7, str(row['Date'])[:10])
-        raw_mat = str(row['Raw Material'])
-        if len(raw_mat) > 20: raw_mat = raw_mat[:18] + ".."
-        c.drawString(105, y+7, raw_mat)
-        
-        part_name = str(row['Part Name'])
-        if len(part_name) > 28: part_name = part_name[:26] + ".."
-        c.drawString(235, y+7, part_name)
-        
-        c.setFont("Helvetica-Bold", 12); c.drawString(405, y+7, str(row['Cutting Size']))
-        c.setFont("Helvetica-Bold", 11); c.drawString(505, y+7, str(row['Quantity']))
-        draw_grid_lines(y+row_h, y)
+        c.drawString(105, y+7, str(row['Raw Material'])[:18])
+        c.drawString(235, y+7, str(row['Part Name'])[:26])
+        c.setFont("Helvetica-Bold", 10); c.drawString(405, y+7, str(row['Cutting Size']))
+        c.drawString(505, y+7, str(row['Quantity']))
+        draw_grid_lines(c, y+row_h, y, [40, 100, 230, 400, 500, 550])
         
     c.save(); buffer.seek(0)
     return buffer
 
-# --- HEXO CUTTING PDF GENERATOR (EXCEL GRID STYLE) ---
 def create_hexo_pdf(mat_name, mat_in, mat_out, balance_mm, df):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     c.setFont("Helvetica-Bold", 14)
     c.drawString(40, 800, "Surgicraft Godown Balance & Cutting Report")
-    
     c.setFont("Helvetica-Bold", 11)
     c.drawString(40, 775, f"Material: {mat_name}")
     c.drawString(400, 775, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
-    c.setFont("Helvetica", 11)
+    c.setFont("Helvetica", 10)
     c.drawString(40, 755, f"📥 Total In (Aavyo): {mm_to_foot_inch(mat_in)}")
     c.drawString(40, 740, f"✂️ Total Out (Kapayo): {mm_to_foot_inch(mat_out)}")
-    
-    c.setFont("Helvetica-Bold", 12)
-    c.setFillColorRGB(0, 0.5, 0) # Green text
+    c.setFillColorRGB(0, 0.5, 0)
+    c.setFont("Helvetica-Bold", 11)
     c.drawString(40, 720, f"✅ Balance (Padyo che): {mm_to_foot_inch(balance_mm)} ({balance_mm:.1f} MM)")
-    c.setFillColorRGB(0, 0, 0) # Back to black
+    c.setFillColorRGB(0, 0, 0)
     
-    y = 690
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(45, y+5, "Date")
-    c.drawString(110, y+5, "Cut Size (MM)")
-    c.drawString(200, y+5, "Qty")
-    c.drawString(250, y+5, "Blade Margin")
-    c.drawString(340, y+5, "Total Used (MM)")
+    y = 690; c.setFont("Helvetica-Bold", 10)
+    c.drawString(45, y+5, "Date"); c.drawString(105, y+5, "Cut Size"); c.drawString(185, y+5, "Qty")
+    c.drawString(225, y+5, "Blade Margin"); c.drawString(315, y+5, "Total Used (MM)")
+    draw_grid_lines(c, y+20, y, [40, 100, 180, 220, 310, 400])
     
-    def draw_grid(y_top, y_bot):
-        c.line(40, y_top, 450, y_top)
-        c.line(40, y_bot, 450, y_bot)
-        c.line(40, y_top, 40, y_bot)
-        c.line(105, y_top, 105, y_bot)
-        c.line(195, y_top, 195, y_bot)
-        c.line(245, y_top, 245, y_bot)
-        c.line(335, y_top, 335, y_bot)
-        c.line(450, y_top, 450, y_bot)
-        
-    draw_grid(y+20, y)
-    row_h = 25
-    
+    row_h = 25; c.setFont("Helvetica", 9)
     for index, row in df.iterrows():
         y -= row_h
         if y < 50:
-            c.showPage()
-            y = 800
-            c.setFont("Helvetica-Bold", 10)
-            c.drawString(45, y+5, "Date"); c.drawString(110, y+5, "Cut Size (MM)"); c.drawString(200, y+5, "Qty")
-            c.drawString(250, y+5, "Blade Margin"); c.drawString(340, y+5, "Total Used (MM)")
-            draw_grid(y+20, y)
-            y -= row_h
+            c.showPage(); y = 800; c.setFont("Helvetica-Bold", 10)
+            c.drawString(45, y+5, "Date"); c.drawString(105, y+5, "Cut Size"); c.drawString(185, y+5, "Qty")
+            c.drawString(225, y+5, "Blade Margin"); c.drawString(315, y+5, "Total Used (MM)")
+            draw_grid_lines(c, y+20, y, [40, 100, 180, 220, 310, 400]); y -= row_h
             
-        c.setFont("Helvetica", 10)
         c.drawString(45, y+7, str(row['Date'])[:10])
-        c.drawString(110, y+7, str(row['Cut Size (MM)']))
-        c.drawString(200, y+7, str(row['Quantity']))
-        c.drawString(250, y+7, str(row['Blade Margin (MM)']))
+        c.drawString(105, y+7, str(row['Cut Size']))
+        c.drawString(185, y+7, str(row['Quantity']))
+        c.drawString(225, y+7, str(row['Blade Margin (MM)']))
         c.setFont("Helvetica-Bold", 10)
-        c.drawString(340, y+7, str(row['Total Used (MM)']))
-        draw_grid(y+row_h, y)
+        c.drawString(315, y+7, f"{float(row['Total Used (MM)']):.1f}")
+        c.setFont("Helvetica", 9)
+        draw_grid_lines(c, y+row_h, y, [40, 100, 180, 220, 310, 400])
         
-    c.save()
-    buffer.seek(0)
+    c.save(); buffer.seek(0)
     return buffer
+
+# --- HEADER COMPONENT ---
+def display_header():
+    col1, col2 = st.columns([1, 15])
+    with col1:
+        if os.path.exists("logo.png"): st.image("logo.png", width=60)
+        else: st.write("🏥")
+    with col2:
+        st.markdown("<h1 style='margin-bottom: 0px; padding-bottom: 0px; color: #FF0000;'>Surgicraft Industries</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='color: #00b300; font-weight: bold; margin-top: 0px;'>Created by Ankit Mistry</p>", unsafe_allow_html=True)
+    st.write("---")
 
 # --- SIDEBAR MENU ---
 st.sidebar.title("🏥 Surgicraft Menu")
@@ -467,19 +397,116 @@ menu = st.sidebar.radio("Go to:", [
 ])
 
 # ==========================================
-# 1. ADD NEW ENTRY PAGE
+# 5. HEXO CUTTING (LIVE STOCK)
 # ==========================================
-if menu == "➕ Add New Entry":
+if menu == "🪚 Hexo Cutting (Live Stock)":
     display_header()
     
-    party_sel = st.selectbox("Select Party (Type to search):", ["-- New Party --"] + unique_parties_list, index=0)
-    if party_sel == "-- New Party --":
-        party_name = st.text_input("Enter New Party Name:")
-    else:
-        party_name = party_sel
-        
-    st.write("---")
+    # --- LAAL ALERT SYSTEM (TOP) ---
+    alert_list = []
+    if not stock_df.empty:
+        for mat in stock_materials_full:
+            m_in = stock_df[stock_df['Material Name'] == mat]['Total Length (MM)'].sum()
+            m_out = hexo_df[hexo_df['Material Name'] == mat]['Total Used (MM)'].sum() if not hexo_df.empty else 0
+            if (m_in - m_out) < 1524: # 5 Foot thi occho
+                alert_list.append(mat)
     
+    if alert_list:
+        st.error(f"🚨 **ALERT!** Nichena maal no stock 5 Foot thi occho che, order aapo: **{', '.join(alert_list)}**")
+
+    st.write("### 🪚 Hexo Cutting & Live Balance Dashboard")
+    htab1, htab2, htab3 = st.tabs(["✂️ Cutting Entry (Stock Out)", "📥 Navo Maal Aavyo (Stock In)", "📊 Live Godown / Search History"])
+    
+    with htab1:
+        st.write("**Ankit bhai mate - Cutting Entry:**")
+        cut_mat = st.selectbox("1. Material Select Karo:", ["-- Select --"] + stock_materials_full)
+        
+        st.write("**2. Cut Size (e.g., 65, 4.25, 4 1/4):**")
+        sc1, sc2 = st.columns(2)
+        cut_size_str = sc1.text_input("Size Lakho:", value="")
+        cut_unit = sc2.selectbox("Ekam (Unit) Select:", ["MM", "Inch", "Foot"])
+        
+        c3, c4 = st.columns(2)
+        cut_qty = c3.number_input("3. Tukda ni Quantity (Nang):", min_value=1, step=1)
+        blade_margin = c4.number_input("4. Blade Margin (Wastage) - Edit kari shako cho:", value=1.5, step=0.1)
+        
+        if cut_size_str:
+            size_val = parse_smart_size(cut_size_str)
+            if size_val > 0 and cut_qty > 0:
+                size_in_mm = convert_to_mm(size_val, cut_unit)
+                total_used_mm = (size_in_mm + blade_margin) * cut_qty
+                
+                st.info(f"**Ganatri:** ({size_in_mm:.1f}mm + {blade_margin}mm blade) x {cut_qty} nang = **{total_used_mm:.1f} MM Total Kapayo**")
+                
+                if st.button("✂️ Kapi Nakho (Save Cutting)", type="primary"):
+                    if cut_mat == "-- Select --": st.warning("Material Select karo!")
+                    else:
+                        dt_str = datetime.now().strftime("%d-%m-%Y")
+                        display_size = f'{cut_size_str} {cut_unit}'
+                        sheet_hexo.append_row([dt_str, cut_mat, display_size, cut_qty, blade_margin, total_used_mm])
+                        st.success("Cutting save thai gayu! Stock minus thai gayo che.")
+                        st.cache_resource.clear()
+                        st.rerun()
+            elif size_val < 0:
+                st.error("Invalid Size! Format check karo (e.g. 65 or 4 1/4)")
+
+    with htab2:
+        st.write("**Papa mate - Navo maal aave tyare ahiya nakhvo:**")
+        new_mat_name = st.text_input("1. Raw Material Naam (e.g., SS 304 28MM Round):")
+        
+        col_v, col_u, col_k = st.columns(3)
+        in_val = col_v.number_input("2. Maap (Lumbai):", min_value=0.0, step=1.0)
+        in_unit = col_u.selectbox("3. Ekam (Unit):", ["Foot", "Inch", "MM"])
+        weight_kg = col_k.number_input("4. Total Vajan (KG) - Optional:", min_value=0.0, step=1.0)
+        
+        if st.button("💾 Save Navo Maal", type="primary"):
+            if not new_mat_name or in_val <= 0:
+                st.warning("Please material nu naam ane lumbai nakho!")
+            else:
+                total_mm = convert_to_mm(in_val, in_unit)
+                total_foot = total_mm / 304.8
+                dt_str = datetime.now().strftime("%d-%m-%Y")
+                sheet_stock.append_row([dt_str, new_mat_name.strip(), total_foot, total_mm, weight_kg])
+                st.toast(f"{new_mat_name} no stock aavi gayo! ✅")
+                st.cache_resource.clear()
+                st.rerun()
+
+    with htab3:
+        st.write("**Live Godown Balance & Search History:**")
+        search_mat = st.selectbox("Search / Filter Material:", ["-- All --"] + stock_materials_full)
+        
+        if not stock_df.empty:
+            for mat in (stock_materials_full if search_mat == "-- All --" else [search_mat]):
+                mat_in = stock_df[stock_df['Material Name'] == mat]['Total Length (MM)'].sum()
+                mat_hexo_df = hexo_df[hexo_df['Material Name'] == mat] if not hexo_df.empty else pd.DataFrame()
+                mat_out = mat_hexo_df['Total Used (MM)'].sum() if not mat_hexo_df.empty else 0
+                balance_mm = mat_in - mat_out
+                
+                with st.expander(f"📦 {mat} | Balance: {mm_to_foot_inch(balance_mm)}", expanded=True):
+                    sc1, sc2, sc3 = st.columns(3)
+                    sc1.metric("Aavyo Hato (Total In)", mm_to_foot_inch(mat_in))
+                    sc2.metric("Kapayo (Total Out)", mm_to_foot_inch(mat_out))
+                    sc3.metric("Live Balance", mm_to_foot_inch(balance_mm))
+                    
+                    if not mat_hexo_df.empty:
+                        st.write(f"**✂️ {mat} ni Cutting History:**")
+                        display_cut_df = mat_hexo_df[['Date', 'Cut Size', 'Quantity', 'Blade Margin (MM)', 'Total Used (MM)']]
+                        st.dataframe(display_cut_df, use_container_width=True, hide_index=True)
+                        
+                        pdf_buf = create_hexo_pdf(mat, mat_in, mat_out, balance_mm, mat_hexo_df)
+                        c_dl, c_pv = st.columns(2)
+                        with c_dl: st.download_button("📥 Download PDF Report", data=pdf_buf, file_name=f"{mat}_Report.pdf", mime="application/pdf", use_container_width=True)
+                        with c_pv: 
+                            if st.button(f"👁️ View Preview", key=f"pv_{mat}", use_container_width=True): display_pdf_in_app(pdf_buf)
+
+# ==========================================
+# 1. ADD NEW ENTRY PAGE
+# ==========================================
+elif menu == "➕ Add New Entry":
+    display_header()
+    party_sel = st.selectbox("Select Party:", ["-- New Party --"] + unique_parties_list, index=0)
+    party_name = st.text_input("Enter New Party Name:") if party_sel == "-- New Party --" else party_sel
+    st.write("---")
     entry_type = st.radio("What do you want to add?", ["Machine", "Spare Part / Custom Item"], horizontal=True)
     
     if entry_type == "Machine":
@@ -490,20 +517,14 @@ if menu == "➕ Add New Entry":
         with col2:
             lengths = sorted(list(set([k.split('x')[1] for k in settings['prices'].keys() if 'x' in k])))
             l_val = st.selectbox("Length", lengths if lengths else ["0"])
-        with col3:
-            speed = st.selectbox("Speed", ["Low", "High", "Low+High"])
+        with col3: speed = st.selectbox("Speed", ["Low", "High", "Low+High"])
 
         size = f"{w_val}x{l_val}"
-        
         st.write("### Add-ons")
         cols = st.columns(3)
-        selected_addons = []
-        addons_prices_struct = {} 
-        col_idx = 0
+        selected_addons, addons_prices_struct, col_idx = [], {}, 0
         
-        if speed == "Low+High":
-            lh_price = settings['addons'].get("LowHighExtra", 0)
-            addons_prices_struct["Low+High Speed Extra"] = lh_price
+        if speed == "Low+High": addons_prices_struct["Low+High Speed Extra"] = settings['addons'].get("LowHighExtra", 0)
             
         for addon_name in settings['addons']:
             if addon_name in ["LowHighExtra"]: continue
@@ -513,56 +534,36 @@ if menu == "➕ Add New Entry":
             col_idx += 1
 
         base_machine_price = int(settings['prices'].get(size, 0))
-        
-        if base_machine_price == 0:
-            st.error(f"Base price not found for size {size}. Please add it in Master Settings.")
+        if base_machine_price == 0: st.error(f"Base price not found for size {size}.")
         else:
             final_total_price = base_machine_price + sum(addons_prices_struct.values())
             st.success(f"**Final Machine Price: Rs. {final_total_price:,.2f}/-**")
-
-            if st.button("➕ SAVE ENTRY TO SHEET", type="primary"):
-                if not party_name: st.warning("Please enter/select Party Name first!")
+            if st.button("➕ SAVE ENTRY", type="primary"):
+                if not party_name: st.warning("Please enter Party Name!")
                 else:
-                    dt = datetime.now().strftime("%d-%m-%Y")
-                    sheet_main.append_row([st.session_state.q_no, party_name, dt, size, speed, json.dumps(addons_prices_struct), final_total_price])
-                    st.toast(f"{format_size(size)} Machine Saved for {party_name}! ✅")
-                    st.cache_resource.clear()
-                    st.rerun()
+                    sheet_main.append_row([st.session_state.q_no, party_name, datetime.now().strftime("%d-%m-%Y"), size, speed, json.dumps(addons_prices_struct), final_total_price])
+                    st.toast("Saved! ✅"); st.cache_resource.clear(); st.rerun()
 
     else:
         st.write("### Add Spare Part Details")
         c1, c2 = st.columns(2)
         with c1:
-            part_sel = st.selectbox("Select Part (Type to search):", ["-- New Part --"] + unique_parts_list, index=0, format_func=format_size_for_ui)
-            if part_sel == "-- New Part --": part_name = st.text_input("Enter New Part Name / Description:")
-            else: part_name = part_sel
-                
-        with c2:
-            st.write(" ") 
-            basic_price = st.number_input("Basic Price (Rs)", min_value=0, step=100)
+            part_sel = st.selectbox("Select Part:", ["-- New Part --"] + unique_parts_list, index=0)
+            part_name = st.text_input("Enter New Part Name:") if part_sel == "-- New Part --" else part_sel
+        with c2: basic_price = st.number_input("Basic Price (Rs)", min_value=0, step=100)
             
         c3, c4, c5 = st.columns([2, 2, 2])
-        with c3:
-            hsn_opts = ["None"] + sorted(settings.get("hsn_codes", []))
-            hsn_val = st.selectbox("HSN Code", hsn_opts)
-        with c4:
-            gst_options = [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28]))
-            gst_rate = st.selectbox("GST (%)", gst_options, format_func=lambda x: f"{x}%" if x > 0 else "None (0%)")
+        with c3: hsn_val = st.selectbox("HSN Code", ["None"] + sorted(settings.get("hsn_codes", [])))
+        with c4: gst_rate = st.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28])), format_func=lambda x: f"{x}%" if x > 0 else "None (0%)")
         with c5:
-            st.write(" ") 
             final_calc_price = basic_price + (basic_price * gst_rate / 100)
             st.info(f"**Final Price: Rs. {final_calc_price:,.2f}**")
         
-        if st.button("➕ SAVE PART TO SHEET", type="primary"):
-            if not party_name: st.warning("Please enter Party Name first!")
-            elif not part_name or final_calc_price <= 0: st.warning("Please enter Part Name and Price!")
+        if st.button("➕ SAVE PART", type="primary"):
+            if not party_name or not part_name or final_calc_price <= 0: st.warning("Please enter all details!")
             else:
-                dt = datetime.now().strftime("%d-%m-%Y")
-                options_json = json.dumps({"Basic": basic_price, "GST": gst_rate, "HSN": hsn_val})
-                sheet_main.append_row([st.session_state.q_no, party_name, dt, part_name, "Spare Part", options_json, final_calc_price])
-                st.toast(f"{format_size(part_name)} Saved for {party_name}! ✅")
-                st.cache_resource.clear()
-                st.rerun()
+                sheet_main.append_row([st.session_state.q_no, party_name, datetime.now().strftime("%d-%m-%Y"), part_name, "Spare Part", json.dumps({"Basic": basic_price, "GST": gst_rate, "HSN": hsn_val}), final_calc_price])
+                st.toast("Saved! ✅"); st.cache_resource.clear(); st.rerun()
 
 # ==========================================
 # 2. PARTY HISTORY & EDIT PAGE 
@@ -576,13 +577,10 @@ elif menu == "📜 Party History & Edit":
         tab1, tab2, tab3 = st.tabs(["📜 View/Download PDF", "✏️ Edit Record", "❌ Delete Record"])
         
         with tab1:
-            st.write("### Party Wise Record")
-            pdf_party = st.selectbox("Select Party (Type to search):", ["-- Select Party --"] + unique_parties_list, key="pdf_party")
+            pdf_party = st.selectbox("Select Party:", ["-- Select Party --"] + unique_parties_list)
             if pdf_party != "-- Select Party --":
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
-                display_party_df = prepare_display_df(party_df)
-                st.dataframe(display_party_df.rename(columns={'Item/Machine':'Item/Part Name', 'Total_Price':'Final Price (Rs)'}), use_container_width=True)
-                st.write("---")
+                st.dataframe(prepare_display_df(party_df), use_container_width=True)
                 hist_pdf = create_history_pdf(pdf_party, party_df, "Lifetime Record")
                 c1, c2 = st.columns(2)
                 with c1: st.download_button("📥 Download PDF", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf", use_container_width=True)
@@ -590,118 +588,75 @@ elif menu == "📜 Party History & Edit":
                     if st.button("👁️ View Preview", use_container_width=True): display_pdf_in_app(hist_pdf)
 
         with tab2:
-            st.write("### Edit Existing Record (By Party)")
-            edit_party = st.selectbox("1. Select Party:", ["-- Select Party --"] + unique_parties_list, key="edit_party")
+            edit_party = st.selectbox("1. Select Party (Edit):", ["-- Select Party --"] + unique_parties_list)
             if edit_party != "-- Select Party --":
                 party_items = df[df['Clean_Party'] == edit_party].copy()
-                party_items['Display'] = party_items['Date'].astype(str) + " | " + party_items['Size'].apply(format_size) + " | Rs. " + party_items['Total_Price'].astype(str)
-                selected_display = st.selectbox("2. Select Specific Item to Edit:", party_items['Display'].tolist())
+                party_items['Display'] = party_items['Date'].astype(str) + " | " + party_items['Size'] + " | Rs. " + party_items['Total_Price'].astype(str)
+                selected_display = st.selectbox("2. Select Item:", party_items['Display'].tolist())
                 
                 if selected_display:
                     row_data = party_items[party_items['Display'] == selected_display].iloc[0]
                     is_spare = (str(row_data['Speed']) == 'Spare Part')
-                    st.write("---")
-                    new_item = st.text_input("Edit Item/Machine Name:", value=row_data['Size'])
+                    new_item = st.text_input("Edit Item Name:", value=row_data['Size'])
                     
                     if is_spare:
                         old_basic, old_gst, old_hsn = get_spare_details(row_data.get('Options', '{}'), row_data['Total_Price'])
-                        new_basic = st.number_input("Edit Basic Price (Rs):", value=old_basic, step=100)
+                        new_basic = st.number_input("Edit Basic Price:", value=old_basic, step=100)
                         c1, c2 = st.columns(2)
-                        with c1:
-                            hsn_opts = ["None"] + sorted(settings.get("hsn_codes", []))
-                            if old_hsn and old_hsn not in hsn_opts: hsn_opts.append(old_hsn); hsn_opts.sort()
-                            new_hsn = st.selectbox("Edit HSN Code:", hsn_opts, index=hsn_opts.index(old_hsn) if old_hsn in hsn_opts else 0)
-                        with c2:
-                            gst_opts = [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28]))
-                            if old_gst not in gst_opts: gst_opts.append(old_gst); gst_opts.sort()
-                            new_gst = st.selectbox("Edit GST (%):", gst_opts, index=gst_opts.index(old_gst), format_func=lambda x: f"{x}%" if x > 0 else "None (0%)")
+                        with c1: new_hsn = st.selectbox("Edit HSN:", ["None"] + sorted(settings.get("hsn_codes", [])))
+                        with c2: new_gst = st.selectbox("Edit GST:", [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28])))
                         new_price = new_basic + (new_basic * new_gst / 100)
-                        st.info(f"**New Final Price: Rs. {new_price:,.2f}**")
-                    else:
-                        new_price = st.number_input("Edit Total Price (Rs):", value=int(float(row_data['Total_Price'])), step=100)
+                    else: new_price = st.number_input("Edit Total Price:", value=int(float(row_data['Total_Price'])), step=100)
                     
-                    if st.button("💾 Update Record in Sheet", type="primary"):
+                    if st.button("💾 Update Record", type="primary"):
                         all_values = sheet_main.get_all_values()
                         row_index_to_update = -1
-                        for i, row_vals in enumerate(all_values):
-                            if i == 0: continue
-                            if (row_vals[1].strip().title() == edit_party and 
-                                str(row_vals[2]).strip() == str(row_data['Date']).strip() and 
-                                str(row_vals[3]).strip() == str(row_data['Size']).strip()):
-                                row_index_to_update = i + 1 
-                                break
-                                
+                        for i, r in enumerate(all_values):
+                            if i > 0 and r[1].strip().title() == edit_party and str(r[2]).strip() == str(row_data['Date']).strip() and str(r[3]).strip() == str(row_data['Size']).strip():
+                                row_index_to_update = i + 1; break
                         if row_index_to_update != -1:
                             sheet_main.update_cell(row_index_to_update, 4, new_item)
                             sheet_main.update_cell(row_index_to_update, 7, new_price)
                             if is_spare: sheet_main.update_cell(row_index_to_update, 6, json.dumps({"Basic": new_basic, "GST": new_gst, "HSN": new_hsn}))
-                            st.success("Record Updated Successfully!")
-                            st.cache_resource.clear()
-                            st.rerun()
-                        else: st.error("Row not found in Database.")
+                            st.success("Updated!"); st.cache_resource.clear(); st.rerun()
 
         with tab3:
-            st.write("### Delete Record (By Party)")
-            del_party = st.selectbox("1. Select Party:", ["-- Select Party --"] + unique_parties_list, key="del_party")
+            del_party = st.selectbox("1. Select Party (Delete):", ["-- Select Party --"] + unique_parties_list)
             if del_party != "-- Select Party --":
                 del_items = df[df['Clean_Party'] == del_party].copy()
-                del_items['Display'] = del_items['Date'].astype(str) + " | " + del_items['Size'].apply(format_size) + " | Rs. " + del_items['Total_Price'].astype(str)
-                selected_del = st.selectbox("2. Select Item to Delete:", del_items['Display'].tolist())
-                
-                if selected_del:
+                del_items['Display'] = del_items['Date'].astype(str) + " | " + del_items['Size'] + " | Rs. " + del_items['Total_Price'].astype(str)
+                selected_del = st.selectbox("2. Select Item:", del_items['Display'].tolist())
+                if selected_del and st.button("❌ Delete Permanently", type="primary"):
                     del_row_data = del_items[del_items['Display'] == selected_del].iloc[0]
-                    if st.button("❌ Delete Permanently", type="primary"):
-                        all_values = sheet_main.get_all_values()
-                        row_index_to_del = -1
-                        for i, row_vals in enumerate(all_values):
-                            if i == 0: continue
-                            if (row_vals[1].strip().title() == del_party and 
-                                str(row_vals[2]).strip() == str(del_row_data['Date']).strip() and 
-                                str(row_vals[3]).strip() == str(del_row_data['Size']).strip()):
-                                row_index_to_del = i + 1 
-                                break
-                                
-                        if row_index_to_del != -1:
-                            sheet_main.delete_rows(row_index_to_del)
-                            st.success("Record Deleted Successfully!")
-                            st.cache_resource.clear()
-                            st.rerun()
-                        else: st.error("Row not found in Database.")
+                    all_values = sheet_main.get_all_values()
+                    for i, r in enumerate(all_values):
+                        if i > 0 and r[1].strip().title() == del_party and str(r[2]).strip() == str(del_row_data['Date']).strip() and str(r[3]).strip() == str(del_row_data['Size']).strip():
+                            sheet_main.delete_rows(i + 1); st.success("Deleted!"); st.cache_resource.clear(); st.rerun(); break
 
 # ==========================================
 # 3. PART PRICE FINDER PAGE 
 # ==========================================
 elif menu == "🔍 Part Price Finder":
     display_header()
-    st.write("Party select karo etle automatic ena j parts nu list aavse!")
-    if main_df.empty: st.info("No records found in Google Sheet.")
+    if main_df.empty: st.info("No records.")
     else:
-        df = main_df.copy()
-        df['Clean_Party'] = df['Party'].astype(str).str.strip().str.title()
+        df = main_df.copy(); df['Clean_Party'] = df['Party'].astype(str).str.strip().str.title()
         c1, c2 = st.columns(2)
-        search_party_name = c1.selectbox("1. Select Party:", ["-- All Parties --"] + unique_parties_list, index=0)
-        
-        if search_party_name != "-- All Parties --":
-            party_specific_parts = sorted(df[df['Clean_Party'] == search_party_name]['Size'].astype(str).str.strip().unique().tolist())
-            search_part_name = c2.selectbox("2. Select Part / Item:", ["-- All Items --"] + party_specific_parts, index=0, format_func=format_size_for_ui)
-        else:
-            search_part_name = c2.selectbox("2. Select Part / Item:", ["-- All Items --"] + all_items_list, index=0, format_func=format_size_for_ui)
+        search_party_name = c1.selectbox("1. Party:", ["-- All Parties --"] + unique_parties_list)
+        party_parts = sorted(df[df['Clean_Party'] == search_party_name]['Size'].astype(str).str.strip().unique().tolist()) if search_party_name != "-- All Parties --" else all_items_list
+        search_part_name = c2.selectbox("2. Part:", ["-- All Items --"] + party_parts)
         
         filtered_df = df.copy()
         if search_party_name != "-- All Parties --": filtered_df = filtered_df[filtered_df['Clean_Party'] == search_party_name]
         if search_part_name != "-- All Items --": filtered_df = filtered_df[filtered_df['Size'].astype(str).str.strip() == search_part_name]
             
-        st.write("### Search Results")
-        if search_party_name == "-- All Parties --" and search_part_name == "-- All Items --": st.info("Please select a Party or Part Name above to see results.")
-        elif filtered_df.empty: st.warning("Aa naam thi koi entry mali nathi.")
+        if filtered_df.empty: st.warning("No entries found.")
+        elif search_party_name == "-- All Parties --" and search_part_name == "-- All Items --": st.info("Select to search.")
         else:
-            display_df = prepare_display_df(filtered_df)
-            display_df.rename(columns={'Size': 'Item / Part Name', 'Total_Price': 'Final Price (Rs)'}, inplace=True)
-            st.dataframe(display_df, use_container_width=True)
-            st.write("---")
+            st.dataframe(prepare_display_df(filtered_df), use_container_width=True)
             pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
             c1, c2 = st.columns(2)
-            with c1: st.download_button("📥 Download PDF", data=pdf_buffer, file_name="PriceSearch_Result.pdf", mime="application/pdf", use_container_width=True)
+            with c1: st.download_button("📥 Download PDF", data=pdf_buffer, file_name="Search_Result.pdf", mime="application/pdf", use_container_width=True)
             with c2: 
                 if st.button("👁️ View Preview", use_container_width=True): display_pdf_in_app(pdf_buffer)
 
@@ -711,193 +666,69 @@ elif menu == "🔍 Part Price Finder":
 elif menu == "✂️ Factory Parts & Cutting":
     display_header()
     st.write("### Factory Production & Cutting Manager")
-    
     tabA, tabB, tabC = st.tabs(["➕ Add Record", "🔍 Search & Report", "✏️ Edit / Delete"])
     
     with tabA:
-        st.write("**Record New Cutting Details:**")
-        col1, col2 = st.columns(2)
-        
-        raw_sel = col1.selectbox("1. Raw Material", ["-- New Material --"] + unique_materials)
-        if raw_sel == "-- New Material --": raw_val = col1.text_input("Enter New Raw Material (e.g. 32mm 304 Round)")
-        else: raw_val = raw_sel
+        c1, c2 = st.columns(2)
+        raw_sel = c1.selectbox("1. Raw Material", ["-- New Material --"] + unique_materials)
+        raw_val = c1.text_input("New Material Name:") if raw_sel == "-- New Material --" else raw_sel
+        part_sel = c2.selectbox("2. Part Name", ["-- New Part --"] + unique_factory_parts)
+        part_val = c2.text_input("New Part Name:") if part_sel == "-- New Part --" else part_sel
             
-        part_sel = col2.selectbox("2. Part Name", ["-- New Part --"] + unique_factory_parts)
-        if part_sel == "-- New Part --": part_val = col2.text_input("Enter New Part Name (e.g. Dryer valve Lambi degree)")
-        else: part_val = part_sel
-            
-        col3, col4 = st.columns(2)
-        cut_size = col3.text_input("3. Cutting Size (e.g. 130mm or 5\")")
-        qty = col4.number_input("4. Quantity (Nang)", min_value=1, step=1)
+        c3, c4 = st.columns(2)
+        cut_size = c3.text_input("3. Cutting Size")
+        qty = c4.number_input("4. Quantity (Nang)", min_value=1)
         
         if st.button("💾 Save Cutting Record", type="primary"):
-            if not raw_val or not part_val or not cut_size: st.warning("Please fill Raw Material, Part Name and Cutting Size!")
+            if not raw_val or not part_val or not cut_size: st.warning("Fill all details!")
             else:
-                dt_str = datetime.now().strftime("%d-%m-%Y")
-                sheet_factory.append_row([dt_str, str(raw_val).strip(), str(part_val).strip(), str(cut_size).strip(), int(qty)])
-                st.toast("Cutting Record Saved! ✅")
-                st.cache_resource.clear()
-                st.rerun()
+                sheet_factory.append_row([datetime.now().strftime("%d-%m-%Y"), raw_val.strip(), part_val.strip(), cut_size.strip(), int(qty)])
+                st.toast("Saved! ✅"); st.cache_resource.clear(); st.rerun()
                 
     with tabB:
-        st.write("**Search Parts Cut from Raw Material:**")
-        
         sc1, sc2 = st.columns(2)
-        search_raw = sc1.selectbox("1. Select Raw Material:", ["-- All Materials --"] + unique_materials)
-        search_part = sc2.selectbox("2. Select Part Name:", ["-- All Parts --"] + unique_factory_parts)
+        search_raw = sc1.selectbox("1. Material:", ["-- All Materials --"] + unique_materials)
+        search_part = sc2.selectbox("2. Part:", ["-- All Parts --"] + unique_factory_parts)
         
         f_df = factory_df.copy()
         if not f_df.empty:
             if search_raw != "-- All Materials --": f_df = f_df[f_df['Raw Material'].astype(str).str.strip() == search_raw]
             if search_part != "-- All Parts --": f_df = f_df[f_df['Part Name'].astype(str).str.strip() == search_part]
-                
             st.dataframe(f_df, use_container_width=True)
-            total_qty = f_df['Quantity'].sum() if 'Quantity' in f_df.columns else 0
-            st.success(f"**Total Quantity (Nang) Found: {total_qty}**")
+            st.success(f"**Total Quantity: {f_df['Quantity'].sum()}**")
             
-            st.write("---")
-            f_pdf_buffer = create_factory_pdf(search_raw, search_part, f_df)
+            f_pdf = create_factory_pdf(search_raw, search_part, f_df)
             c1, c2 = st.columns(2)
-            with c1: st.download_button("📥 Download PDF (Cutting List)", data=f_pdf_buffer, file_name="Factory_Cutting_List.pdf", mime="application/pdf", use_container_width=True)
+            with c1: st.download_button("📥 Download List", data=f_pdf, file_name="Factory_List.pdf", mime="application/pdf", use_container_width=True)
             with c2:
-                if st.button("👁️ View Preview", use_container_width=True): display_pdf_in_app(f_pdf_buffer)
-                
-        else: st.info("No cutting records found yet.")
+                if st.button("👁️ View", use_container_width=True): display_pdf_in_app(f_pdf)
             
     with tabC:
-        st.write("**Edit or Delete Factory Records:**")
-        if factory_df.empty: st.info("No records to edit.")
+        if factory_df.empty: st.info("No records.")
         else:
             edit_f_df = factory_df.copy()
             edit_f_df['Display'] = edit_f_df['Date'].astype(str) + " | " + edit_f_df['Raw Material'].astype(str) + " | " + edit_f_df['Part Name'].astype(str) + " | Qty: " + edit_f_df['Quantity'].astype(str)
             sel_rec = st.selectbox("Select Record:", edit_f_df['Display'].tolist())
             
             if sel_rec:
-                row_f_data = edit_f_df[edit_f_df['Display'] == sel_rec].iloc[0]
-                st.write("---")
-                e_col1, e_col2 = st.columns(2)
-                new_f_raw = e_col1.text_input("Edit Raw Material:", value=str(row_f_data['Raw Material']))
-                new_f_part = e_col2.text_input("Edit Part Name:", value=str(row_f_data['Part Name']))
-                e_col3, e_col4 = st.columns(2)
-                new_f_cut = e_col3.text_input("Edit Cutting Size:", value=str(row_f_data['Cutting Size']))
-                new_f_qty = e_col4.number_input("Edit Quantity:", value=int(row_f_data['Quantity']), min_value=1)
+                r_d = edit_f_df[edit_f_df['Display'] == sel_rec].iloc[0]
+                e1, e2 = st.columns(2)
+                n_raw = e1.text_input("Edit Material:", value=str(r_d['Raw Material']))
+                n_prt = e2.text_input("Edit Part Name:", value=str(r_d['Part Name']))
+                e3, e4 = st.columns(2)
+                n_cut = e3.text_input("Edit Size:", value=str(r_d['Cutting Size']))
+                n_qty = e4.number_input("Edit Qty:", value=int(r_d['Quantity']), min_value=1)
                 
-                c_btn1, c_btn2 = st.columns(2)
-                if c_btn1.button("💾 Update Record", type="primary"):
-                    all_f_vals = sheet_factory.get_all_values()
-                    row_idx_f = -1
-                    for i, r_vals in enumerate(all_f_vals):
-                        if i == 0: continue
-                        if (r_vals[0] == str(row_f_data['Date']) and r_vals[1] == str(row_f_data['Raw Material']) and 
-                            r_vals[2] == str(row_f_data['Part Name']) and str(r_vals[3]) == str(row_f_data['Cutting Size'])):
-                            row_idx_f = i + 1; break
-                            
-                    if row_idx_f != -1:
-                        sheet_factory.update(f"B{row_idx_f}:E{row_idx_f}", [[new_f_raw, new_f_part, new_f_cut, new_f_qty]])
-                        st.success("Record Updated!")
-                        st.cache_resource.clear()
-                        st.rerun()
-                    else: st.error("Row not found for update.")
-                        
-                if c_btn2.button("❌ Delete Record"):
-                    all_f_vals = sheet_factory.get_all_values()
-                    row_idx_f = -1
-                    for i, r_vals in enumerate(all_f_vals):
-                        if i == 0: continue
-                        if (r_vals[0] == str(row_f_data['Date']) and r_vals[1] == str(row_f_data['Raw Material']) and 
-                            r_vals[2] == str(row_f_data['Part Name']) and str(r_vals[3]) == str(row_f_data['Cutting Size'])):
-                            row_idx_f = i + 1; break
-                            
-                    if row_idx_f != -1:
-                        sheet_factory.delete_rows(row_idx_f)
-                        st.success("Record Deleted!")
-                        st.cache_resource.clear()
-                        st.rerun()
-                    else: st.error("Row not found for deletion.")
-
-# ==========================================
-# 5. HEXO CUTTING (LIVE STOCK) - NEW!
-# ==========================================
-elif menu == "🪚 Hexo Cutting (Live Stock)":
-    display_header()
-    st.write("### 🪚 Hexo Cutting & Live Balance Dashboard")
-    
-    htab1, htab2, htab3 = st.tabs(["📥 Navo Maal Aavyo (Stock In)", "✂️ Hexo/Cutter Entry (Stock Out)", "📊 Live Godown & PDF"])
-    
-    with htab1:
-        st.write("**Papa mate - Navo maal aave tyare ahiya nakhvo:**")
-        col1, col2 = st.columns(2)
-        new_mat_name = col1.text_input("1. Raw Material Naam (e.g., SS 304 28MM Round, MS 1\" Patti):")
-        total_foot = col2.number_input("2. Total Ladi Lumbai (Foot ma):", min_value=0.0, step=1.0)
-        weight_kg = st.number_input("3. Total Vajan (KG) - Optional:", min_value=0.0, step=1.0)
-        
-        if st.button("💾 Save Navo Maal", type="primary"):
-            if not new_mat_name or total_foot <= 0:
-                st.warning("Please material nu naam ane lumbai nakho!")
-            else:
-                dt_str = datetime.now().strftime("%d-%m-%Y")
-                total_mm = total_foot * 304.8 
-                sheet_stock.append_row([dt_str, new_mat_name.strip(), total_foot, total_mm, weight_kg])
-                st.toast(f"{new_mat_name} no stock aavi gayo! ✅")
-                st.cache_resource.clear()
-                st.rerun()
-
-    with htab2:
-        st.write("**Ankit bhai mate - Cutting Entry:**")
-        c1, c2 = st.columns(2)
-        cut_mat = c1.selectbox("1. Material Select Karo:", ["-- Select --"] + stock_materials)
-        cut_size = c2.number_input("2. Cut Size (MM ma):", min_value=0.0, step=1.0)
-        
-        c3, c4 = st.columns(2)
-        cut_qty = c3.number_input("3. Tukda ni Quantity (Nang):", min_value=1, step=1)
-        blade_type = c4.selectbox("4. Kyo Blade Vaparyo?", ["Hexo Blade (1.5mm Margin)", "Cutoff Wheel (3.0mm Margin)"])
-        
-        margin_mm = 1.5 if "Hexo" in blade_type else 3.0
-        
-        if cut_size > 0 and cut_qty > 0:
-            total_used_mm = (cut_size + margin_mm) * cut_qty
-            st.info(f"**Ganatri:** ({cut_size}mm + {margin_mm}mm blade) x {cut_qty} nang = **{total_used_mm} MM Total Kapayo**")
-            
-            if st.button("✂️ Kapi Nakho (Save Cutting)", type="primary"):
-                if cut_mat == "-- Select --": st.warning("Material Select karo!")
-                else:
-                    dt_str = datetime.now().strftime("%d-%m-%Y")
-                    sheet_hexo.append_row([dt_str, cut_mat, cut_size, cut_qty, margin_mm, total_used_mm])
-                    st.success("Cutting save thai gayu! Stock minus thai gayo che.")
-                    st.cache_resource.clear()
-                    st.rerun()
-
-    with htab3:
-        st.write("**Live Godown Balance (Tijori no Hisab):**")
-        search_mat = st.selectbox("Check Balance (Search Box):", ["-- All --"] + stock_materials)
-        
-        if not stock_df.empty:
-            for mat in (stock_materials if search_mat == "-- All --" else [search_mat]):
-                mat_in = stock_df[stock_df['Material Name'] == mat]['Total Length (MM)'].sum()
-                mat_hexo_df = hexo_df[hexo_df['Material Name'] == mat] if not hexo_df.empty else pd.DataFrame()
-                mat_out = mat_hexo_df['Total Used (MM)'].sum() if not mat_hexo_df.empty else 0
-                
-                balance_mm = mat_in - mat_out
-                
-                if balance_mm < 1524: 
-                    st.error(f"🚨 **ALERT!** {mat} no stock 5 Foot thi occho che! Jaldi order aapo.")
-                
-                with st.expander(f"📦 {mat} | Balance: {mm_to_foot_inch(balance_mm)} ({balance_mm:.1f} MM)", expanded=True):
-                    sc1, sc2, sc3 = st.columns(3)
-                    sc1.metric("Aavyo Hato (Total In)", mm_to_foot_inch(mat_in))
-                    sc2.metric("Kapayo (Total Out)", mm_to_foot_inch(mat_out))
-                    sc3.metric("Padyo che (Live Balance)", mm_to_foot_inch(balance_mm))
-                    
-                    if balance_mm < 0:
-                        st.warning("Aapdo balance Minus ma che. Papa ne kaho navo maal entry kare chopda ma!")
-                    
-                    st.write("---")
-                    # PDF GENERATION FOR LIVE STOCK
-                    pdf_buf = create_hexo_pdf(mat, mat_in, mat_out, balance_mm, mat_hexo_df)
-                    c_btn1, c_btn2 = st.columns(2)
-                    with c_btn1: st.download_button("📥 Download PDF (Stock Report)", data=pdf_buf, file_name=f"{mat}_Stock.pdf", mime="application/pdf", use_container_width=True)
-                    with c_btn2: 
-                        if st.button(f"👁️ View {mat} Preview", use_container_width=True): display_pdf_in_app(pdf_buf)
+                b1, b2 = st.columns(2)
+                if b1.button("💾 Update", type="primary"):
+                    for i, r in enumerate(sheet_factory.get_all_values()):
+                        if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Raw Material']) and r[2] == str(r_d['Part Name']) and str(r[3]) == str(r_d['Cutting Size']):
+                            sheet_factory.update(f"B{i+1}:E{i+1}", [[n_raw, n_prt, n_cut, n_qty]])
+                            st.success("Updated!"); st.cache_resource.clear(); st.rerun(); break
+                if b2.button("❌ Delete"):
+                    for i, r in enumerate(sheet_factory.get_all_values()):
+                        if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Raw Material']) and r[2] == str(r_d['Part Name']) and str(r[3]) == str(r_d['Cutting Size']):
+                            sheet_factory.delete_rows(i+1); st.success("Deleted!"); st.cache_resource.clear(); st.rerun(); break
 
 # ==========================================
 # 6. MASTER SETTINGS PAGE
@@ -928,8 +759,8 @@ elif menu == "⚙️ Master Settings":
         n_w = c1.text_input("Width (e.g. 24)")
         n_l = c2.text_input("Length (e.g. 48)")
         n_p = c3.number_input("Base Price", value=0, step=1000)
-        if st.button("➕ Add New Size"):
-            if n_w and n_l and n_p > 0: settings['prices'][f"{n_w}x{n_l}"] = n_p; save_settings(settings); st.rerun()
+        if st.button("➕ Add New Size") and n_w and n_l and n_p > 0:
+            settings['prices'][f"{n_w}x{n_l}"] = n_p; save_settings(settings); st.rerun()
 
     with tab2:
         st.subheader("Edit/Remove Add-ons")
@@ -950,8 +781,8 @@ elif menu == "⚙️ Master Settings":
         c1, c2 = st.columns(2)
         new_a = c1.text_input("New Add-on Name")
         new_p = c2.number_input("Add-on Price", value=0, step=500)
-        if st.button("➕ Add New Option"):
-            if new_a and new_p > 0: settings['addons'][new_a] = new_p; save_settings(settings); st.rerun()
+        if st.button("➕ Add Option") and new_a and new_p > 0:
+            settings['addons'][new_a] = new_p; save_settings(settings); st.rerun()
                 
     with tab3:
         st.subheader("Manage GST Percentages (%)")
@@ -964,7 +795,6 @@ elif menu == "⚙️ Master Settings":
         n_gst = st.number_input("Add New GST Rate (%)", min_value=1, max_value=100, step=1)
         if st.button("➕ Add New GST %"):
             if n_gst not in gst_rates: gst_rates.append(n_gst); gst_rates.sort(); settings["gst_rates"] = gst_rates; save_settings(settings); st.rerun()
-            else: st.warning("Aa percentage pahelathi j che.")
 
     with tab4:
         st.subheader("Manage HSN Codes")
@@ -975,6 +805,5 @@ elif menu == "⚙️ Master Settings":
             if cB.button("❌ Remove", key=f"dhsn_{h}"): hsn_codes.remove(h); settings["hsn_codes"] = hsn_codes; save_settings(settings); st.rerun()
         st.write("---")
         n_hsn = st.text_input("Add New HSN Code")
-        if st.button("➕ Add New HSN"):
-            if n_hsn and n_hsn not in hsn_codes: hsn_codes.append(n_hsn); hsn_codes.sort(); settings["hsn_codes"] = hsn_codes; save_settings(settings); st.rerun()
-            elif n_hsn in hsn_codes: st.warning("Aa HSN Code pahelathi j che.")
+        if st.button("➕ Add New HSN") and n_hsn:
+            if n_hsn not in hsn_codes: hsn_codes.append(n_hsn); hsn_codes.sort(); settings["hsn_codes"] = hsn_codes; save_settings(settings); st.rerun()
