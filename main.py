@@ -140,11 +140,10 @@ def get_spare_details(row_options, total_price):
         except: basic = 0
     return basic, gst, hsn
 
-# --- BUG FIX: Process DataFrame for OLD vs NEW Price without dropping columns ---
 def prepare_display_df_with_history(df):
-    df = df.copy() # Copy to prevent warnings
+    df = df.copy()
     df['DateObj'] = pd.to_datetime(df['Date'], format="%d-%m-%Y", errors='coerce')
-    df = df.sort_values('DateObj') # Sort from oldest to newest
+    df = df.sort_values('DateObj')
 
     basics, gsts, hsns = [], [], []
     old_dates, old_prices = [], []
@@ -173,18 +172,15 @@ def prepare_display_df_with_history(df):
         else:
             basics.append("-"); gsts.append("-"); hsns.append("-")
             
-    # Add new columns to the full dataframe
     df['Old Date'] = old_dates
     df['Old Price'] = old_prices
     df['HSN Code'] = hsns
     df['Basic Price'] = basics
     df['GST'] = gsts
     
-    # Sort newest to oldest for display
     df = df.sort_values('DateObj', ascending=False)
     return df
 
-# --- SMART FRACTION PARSER & CONVERTER ---
 def parse_smart_size(val_str):
     val_str = str(val_str).replace('"', '').replace('inch', '').replace('mm', '').strip()
     try:
@@ -212,7 +208,7 @@ def mm_to_foot_inch(mm_val):
     inches = total_inches % 12
     return f"{feet} Foot {inches:.1f} Inch"
 
-# --- PDF GENERATORS ---
+# --- SMART PDF GENERATORS (Upgraded Grid & Alignment) ---
 def display_pdf_in_app(pdf_buffer):
     base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
     pdf_display = f'''<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="450" type="application/pdf" style="border: 2px solid #ccc; border-radius: 8px;"></iframe>'''
@@ -221,9 +217,9 @@ def display_pdf_in_app(pdf_buffer):
 
 def draw_grid_lines(c, y_top, y_bot, cols):
     c.setLineWidth(0.5)
-    c.line(cols[0], y_top, cols[-1], y_top)
-    c.line(cols[0], y_bot, cols[-1], y_bot)
-    for col in cols: c.line(col, y_top, col, y_bot)
+    c.line(cols[0], y_top, cols[-1], y_top) # Top horizontal
+    c.line(cols[0], y_bot, cols[-1], y_bot) # Bottom horizontal
+    for col in cols: c.line(col, y_top, col, y_bot) # Vertical lines
 
 def create_history_pdf(party, records_df, period_str="Lifetime"):
     buffer = io.BytesIO()
@@ -236,54 +232,74 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
     c.drawString(40, height - 60, f"Party Name: {party}")
     c.drawString(width - 150, height - 60, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
-    y = height - 90; c.setFont("Helvetica-Bold", 10)
-    cols = [40, 105, 170, 480, 545, 600, 680, 780]
-    c.drawString(cols[0]+5, y+5, "New Date"); c.drawString(cols[1]+5, y+5, "Old Date")
-    c.drawString(cols[2]+5, y+5, "Item Description / Details (With Basic/GST)")
-    c.drawString(cols[3]+5, y+5, "HSN"); c.drawString(cols[4]+5, y+5, "Old Price")
-    c.drawString(cols[5]+5, y+5, "New Final Price")
+    y = height - 90
+    c.setFont("Helvetica-Bold", 10)
+    # Perfect column widths for A4 Landscape (842 width)
+    cols = [40, 110, 180, 500, 560, 660, 780] 
     
-    draw_grid_lines(c, y+20, y-5, [cols[0], cols[1], cols[2], cols[3], cols[5], cols[7]])
-    y -= 25; c.setFont("Helvetica", 9); grand_total = 0
+    # Headers
+    row_y_top = y + 20
+    row_y_bot = y - 5
+    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date")
+    c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
+    c.drawString(cols[2]+5, y+2, "Item Description / Details (With Basic/GST)")
+    c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "HSN")
+    c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Old Price")
+    c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "New Final Price")
+    draw_grid_lines(c, row_y_top, row_y_bot, cols)
+    y = row_y_bot
+    grand_total = 0
 
     for index, row in records_df.iterrows():
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
-        y_start = y + 15
+        
+        # Check page break
+        needed_height = 20
+        if str(row['Speed']) != "Spare Part":
+            needed_height = 30
+            try: needed_height += len(json.loads(row.get('Options', '{}'))) * 15
+            except: pass
+            
+        if y - needed_height < 50:
+            c.showPage(); y = height - 50; c.setFont("Helvetica-Bold", 10)
+            row_y_top = y + 20; row_y_bot = y - 5
+            c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date"); c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
+            c.drawString(cols[2]+5, y+2, "Item Description / Details"); c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "HSN")
+            c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Old Price"); c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "New Final Price")
+            draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
+
+        row_y_top = y
+        text_y = y - 15 # Padding from top
         
         c.setFont("Helvetica-Bold", 9)
-        c.drawString(cols[0]+5, y, str(row['Date']))
-        c.drawString(cols[1]+5, y, str(row['Old Date']))
-        c.drawString(cols[3]+5, y, str(row['HSN Code'])[:8])
+        c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date']))
+        c.drawCentredString((cols[1]+cols[2])/2.0, text_y, str(row['Old Date']))
+        c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['HSN Code'])[:8])
         
         old_price_str = f"{row['Old Price']:,.2f}" if row['Old Price'] != "-" else "-"
-        c.drawString(cols[4]+5, y, old_price_str)
-        c.drawString(cols[5]+5, y, f"{total_price:,.2f}")
+        c.drawRightString(cols[5]-5, text_y, old_price_str) # Right aligned
+        c.drawRightString(cols[6]-5, text_y, f"{total_price:,.2f}") # Right aligned
         
         c.setFont("Helvetica", 9)
         if str(row['Speed']) == "Spare Part":
             part_display = f"Part: {format_size(str(row['Size']))} (Basic: Rs.{row['Basic Price']} | GST: {row['GST']})"
-            c.drawString(cols[2]+5, y, part_display[:75])
-            grand_total += total_price; y -= 20
+            c.drawString(cols[2]+5, text_y, part_display[:75])
+            grand_total += total_price; y = text_y - 5 # Padding from bottom
         else:
-            c.drawString(cols[2]+5, y, f"Machine: {format_size(str(row['Size']))} | Speed: {row['Speed']}")
-            y -= 15; c.setFont("Helvetica-Oblique", 8)
-            addons_dict = {}
+            c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))} | Speed: {row['Speed']}")
+            temp_y = text_y - 15
+            c.setFont("Helvetica-Oblique", 8)
             try: addons_dict = json.loads(row.get('Options', '{}'))
-            except: pass
+            except: addons_dict = {}
             for name, price in addons_dict.items():
-                c.drawString(cols[2]+15, y, f"• Add-on: {name}"); y -= 15
-            grand_total += total_price; y -= 5
-            
-        draw_grid_lines(c, y_start, y, [cols[0], cols[1], cols[2], cols[3], cols[5], cols[7]])
+                c.drawString(cols[2]+15, temp_y, f"• Add-on: {name}")
+                temp_y -= 15
+            grand_total += total_price; y = temp_y + 5
+
+        row_y_bot = y
+        draw_grid_lines(c, row_y_top, row_y_bot, cols)
         
-        if y < 80:
-            c.showPage(); y = height - 50; c.setFont("Helvetica-Bold", 10)
-            c.drawString(cols[0]+5, y+5, "New Date"); c.drawString(cols[1]+5, y+5, "Old Date")
-            c.drawString(cols[2]+5, y+5, "Item Description / Details"); c.drawString(cols[3]+5, y+5, "HSN")
-            c.drawString(cols[4]+5, y+5, "Old Price"); c.drawString(cols[5]+5, y+5, "New Final Price")
-            draw_grid_lines(c, y+20, y-5, [cols[0], cols[1], cols[2], cols[3], cols[5], cols[7]]); y -= 25
-        
-    c.setFont("Helvetica-Bold", 12); c.drawString(40, y-25, f"{period_str.upper()} TOTAL VALUE: Rs. {grand_total:,.2f}/-")
+    y -= 25; c.setFont("Helvetica-Bold", 12); c.drawString(40, y, f"{period_str.upper()} TOTAL VALUE: Rs. {grand_total:,.2f}/-")
     c.save(); buffer.seek(0)
     return buffer
 
@@ -298,39 +314,53 @@ def create_part_search_pdf(party_name, part_name, df):
     c.drawString(40, height-75, f"Item Filter: {part_name}"); c.drawString(width-150, height-60, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
     y = height-110; c.setFont("Helvetica-Bold", 10)
-    cols = [40, 105, 170, 320, 520, 570, 640, 780]
-    c.drawString(cols[0]+5, y+5, "New Date"); c.drawString(cols[1]+5, y+5, "Old Date")
-    c.drawString(cols[2]+5, y+5, "Party Name"); c.drawString(cols[3]+5, y+5, "Item Details")
-    c.drawString(cols[4]+5, y+5, "HSN"); c.drawString(cols[5]+5, y+5, "Old Price"); c.drawString(cols[6]+5, y+5, "New Price")
-    draw_grid_lines(c, y+20, y-5, [cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7]]); y -= 25
+    cols = [40, 110, 180, 320, 540, 590, 680, 780]
+    
+    row_y_top = y + 20
+    row_y_bot = y - 5
+    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date"); c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
+    c.drawString(cols[2]+5, y+2, "Party Name"); c.drawString(cols[3]+5, y+2, "Item Details")
+    c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "HSN"); c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "Old Price")
+    c.drawCentredString((cols[6]+cols[7])/2.0, y+2, "New Price")
+    draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
     
     for index, row in df.iterrows():
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
-        y_start = y + 15
+        
+        needed_height = 20 if str(row['Speed']) == "Spare Part" else 35
+        if y - needed_height < 50:
+            c.showPage(); y = height-50; c.setFont("Helvetica-Bold", 10)
+            row_y_top = y+20; row_y_bot = y-5
+            c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date"); c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
+            c.drawString(cols[2]+5, y+2, "Party Name"); c.drawString(cols[3]+5, y+2, "Item Details")
+            c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "HSN"); c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "Old Price")
+            c.drawCentredString((cols[6]+cols[7])/2.0, y+2, "New Price")
+            draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
+
+        row_y_top = y
+        text_y = y - 15
+        
         c.setFont("Helvetica-Bold", 9)
-        c.drawString(cols[0]+5, y, str(row['Date'])); c.drawString(cols[1]+5, y, str(row['Old Date']))
-        c.drawString(cols[2]+5, y, str(row['Party'])[:22])
-        c.drawString(cols[4]+5, y, str(row['HSN Code'])[:8])
+        c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date']))
+        c.drawCentredString((cols[1]+cols[2])/2.0, text_y, str(row['Old Date']))
+        c.drawString(cols[2]+5, text_y, str(row['Party'])[:22])
+        c.drawCentredString((cols[4]+cols[5])/2.0, text_y, str(row['HSN Code'])[:8])
         
         old_price_str = f"{row['Old Price']:,.2f}" if row['Old Price'] != "-" else "-"
-        c.drawString(cols[5]+5, y, old_price_str)
-        c.drawString(cols[6]+5, y, f"{total_price:,.2f}")
+        c.drawRightString(cols[6]-5, text_y, old_price_str)
+        c.drawRightString(cols[7]-5, text_y, f"{total_price:,.2f}")
 
         c.setFont("Helvetica", 9)
         if str(row['Speed']) == "Spare Part":
-            c.drawString(cols[3]+5, y, f"Part: {format_size(str(row['Size']))}")[:40]
-            y -= 20
+            c.drawString(cols[3]+5, text_y, f"Part: {format_size(str(row['Size']))}")[:40]
+            y = text_y - 5
         else:
-            c.drawString(cols[3]+5, y, f"Machine: {format_size(str(row['Size']))}")
-            y -= 15; c.setFont("Helvetica-Oblique", 8); c.drawString(cols[3]+15, y, f"• {row['Speed']}"); y -= 15
+            c.drawString(cols[3]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
+            c.setFont("Helvetica-Oblique", 8); c.drawString(cols[3]+15, text_y-15, f"• {row['Speed']}")
+            y = text_y - 20
             
-        draw_grid_lines(c, y_start, y, [cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7]])
-        if y < 80:
-            c.showPage(); y = height-50; c.setFont("Helvetica-Bold", 10)
-            c.drawString(cols[0]+5, y+5, "New Date"); c.drawString(cols[1]+5, y+5, "Old Date"); c.drawString(cols[2]+5, y+5, "Party Name")
-            c.drawString(cols[3]+5, y+5, "Item Details"); c.drawString(cols[4]+5, y+5, "HSN")
-            c.drawString(cols[5]+5, y+5, "Old Price"); c.drawString(cols[6]+5, y+5, "New Price")
-            draw_grid_lines(c, y+20, y-5, [cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7]]); y -= 25
+        row_y_bot = y
+        draw_grid_lines(c, row_y_top, row_y_bot, cols)
             
     c.save(); buffer.seek(0); return buffer
 
@@ -342,68 +372,82 @@ def create_factory_pdf(raw_material, search_part, df):
     c.drawString(220, 780, f"Part Filter: {search_part}"); c.drawString(420, 780, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
     y = 740; c.setFont("Helvetica-Bold", 10)
-    c.drawString(45, y+5, "Date"); c.drawString(105, y+5, "Raw Material"); c.drawString(235, y+5, "Part Name")
-    c.drawString(405, y+5, "Cutting Size"); c.drawString(505, y+5, "Qty")
-    draw_grid_lines(c, y+20, y, [40, 100, 230, 400, 500, 550])
+    cols = [40, 100, 240, 420, 500, 550]
+    row_y_top = y + 20; row_y_bot = y - 5
     
-    row_h = 25
+    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date")
+    c.drawString(cols[1]+5, y+2, "Raw Material")
+    c.drawString(cols[2]+5, y+2, "Part Name")
+    c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Cutting Size")
+    c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Qty")
+    draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
+    
     for index, row in df.iterrows():
-        y -= row_h
-        if y < 50:
+        if y - 25 < 50:
             c.showPage(); y = 800; c.setFont("Helvetica-Bold", 10)
-            c.drawString(45, y+5, "Date"); c.drawString(105, y+5, "Raw Material"); c.drawString(235, y+5, "Part Name")
-            c.drawString(405, y+5, "Cutting Size"); c.drawString(505, y+5, "Qty")
-            draw_grid_lines(c, y+20, y, [40, 100, 230, 400, 500, 550]); y -= row_h
+            row_y_top = y+20; row_y_bot = y-5
+            c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date"); c.drawString(cols[1]+5, y+2, "Raw Material")
+            c.drawString(cols[2]+5, y+2, "Part Name"); c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Cutting Size")
+            c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Qty")
+            draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
             
+        row_y_top = y
+        text_y = y - 15
         c.setFont("Helvetica", 9)
-        c.drawString(45, y+7, str(row['Date'])[:10])
-        c.drawString(105, y+7, str(row['Raw Material'])[:18])
-        c.drawString(235, y+7, str(row['Part Name'])[:26])
-        c.setFont("Helvetica-Bold", 10); c.drawString(405, y+7, str(row['Cutting Size']))
-        c.drawString(505, y+7, str(row['Quantity']))
-        draw_grid_lines(c, y+row_h, y, [40, 100, 230, 400, 500, 550])
+        c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date'])[:10])
+        c.drawString(cols[1]+5, text_y, str(row['Raw Material'])[:22])
+        c.drawString(cols[2]+5, text_y, str(row['Part Name'])[:28])
+        c.setFont("Helvetica-Bold", 10); c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['Cutting Size']))
+        c.setFont("Helvetica", 10); c.drawCentredString((cols[4]+cols[5])/2.0, text_y, str(row['Quantity']))
+        
+        row_y_bot = text_y - 5
+        draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
         
     c.save(); buffer.seek(0); return buffer
 
 def create_hexo_pdf(mat_name, mat_in, mat_out, balance_mm, df):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(40, 800, "Surgicraft Godown Balance & Cutting Report")
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(40, 775, f"Material: {mat_name}")
-    c.drawString(400, 775, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
-    
-    c.setFont("Helvetica", 10)
-    c.drawString(40, 755, f"📥 Total In (Aavyo): {mm_to_foot_inch(mat_in)}")
+    c.setFont("Helvetica-Bold", 14); c.drawString(40, 800, "Surgicraft Godown Balance & Cutting Report")
+    c.setFont("Helvetica-Bold", 11); c.drawString(40, 775, f"Material: {mat_name}"); c.drawString(400, 775, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
+    c.setFont("Helvetica", 10); c.drawString(40, 755, f"📥 Total In (Aavyo): {mm_to_foot_inch(mat_in)}")
     c.drawString(40, 740, f"✂️ Total Out (Kapayo): {mm_to_foot_inch(mat_out)}")
-    c.setFillColorRGB(0, 0.5, 0)
-    c.setFont("Helvetica-Bold", 11)
+    c.setFillColorRGB(0, 0.5, 0); c.setFont("Helvetica-Bold", 11)
     c.drawString(40, 720, f"✅ Balance (Padyo che): {mm_to_foot_inch(balance_mm)} ({balance_mm:.1f} MM)")
     c.setFillColorRGB(0, 0, 0)
     
     y = 690; c.setFont("Helvetica-Bold", 10)
-    c.drawString(45, y+5, "Date"); c.drawString(105, y+5, "Cut Size"); c.drawString(185, y+5, "Qty")
-    c.drawString(225, y+5, "Blade Margin"); c.drawString(315, y+5, "Total Used (MM)")
-    draw_grid_lines(c, y+20, y, [40, 100, 180, 220, 310, 450])
+    cols = [40, 105, 195, 255, 345, 550]
+    row_y_top = y + 20; row_y_bot = y - 5
     
-    row_h = 25; c.setFont("Helvetica", 9)
+    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date")
+    c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Cut Size")
+    c.drawCentredString((cols[2]+cols[3])/2.0, y+2, "Qty")
+    c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Blade Margin")
+    c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Total Used (MM)")
+    draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
+    
     for index, row in df.iterrows():
-        y -= row_h
-        if y < 50:
+        if y - 25 < 50:
             c.showPage(); y = 800; c.setFont("Helvetica-Bold", 10)
-            c.drawString(45, y+5, "Date"); c.drawString(105, y+5, "Cut Size"); c.drawString(185, y+5, "Qty")
-            c.drawString(225, y+5, "Blade Margin"); c.drawString(315, y+5, "Total Used (MM)")
-            draw_grid_lines(c, y+20, y, [40, 100, 180, 220, 310, 450]); y -= row_h
+            row_y_top = y+20; row_y_bot = y-5
+            c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date"); c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Cut Size")
+            c.drawCentredString((cols[2]+cols[3])/2.0, y+2, "Qty"); c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Blade Margin")
+            c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Total Used (MM)")
+            draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
             
-        c.drawString(45, y+7, str(row['Date'])[:10])
-        c.drawString(105, y+7, str(row['Cut Size']))
-        c.drawString(185, y+7, str(row['Quantity']))
-        c.drawString(225, y+7, str(row['Blade Margin (MM)']))
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(315, y+7, f"{float(row['Total Used (MM)']):.1f}")
+        row_y_top = y
+        text_y = y - 15
         c.setFont("Helvetica", 9)
-        draw_grid_lines(c, y+row_h, y, [40, 100, 180, 220, 310, 450])
+        c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date'])[:10])
+        c.drawCentredString((cols[1]+cols[2])/2.0, text_y, str(row['Cut Size']))
+        c.drawCentredString((cols[2]+cols[3])/2.0, text_y, str(row['Quantity']))
+        c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['Blade Margin (MM)']))
+        c.setFont("Helvetica-Bold", 10)
+        c.drawRightString(cols[5]-10, text_y, f"{float(row['Total Used (MM)']):.1f}")
+        
+        row_y_bot = text_y - 5
+        draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
         
     c.save(); buffer.seek(0)
     return buffer
@@ -645,7 +689,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
 
 
 # ==========================================
-# 2. FACTORY PARTS & CUTTING MANAGER (Junu Menu)
+# 2. FACTORY PARTS & CUTTING MANAGER
 # ==========================================
 elif menu == "✂️ Factory Parts & Cutting":
     display_header()
@@ -795,18 +839,13 @@ elif menu == "📜 Party History & Edit":
             pdf_party = st.selectbox("Select Party:", ["-- Select Party --"] + unique_parties_list)
             if pdf_party != "-- Select Party --":
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
-                
-                # BUG FIX: Get FULL Processed DF with Old Dates
                 processed_df = prepare_display_df_with_history(party_df)
                 
-                # Setup Display Dataframe (Subset of columns)
                 display_df = processed_df[['Date', 'Old Date', 'Party', 'Size', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']].copy()
                 display_df['Size'] = display_df['Size'].apply(format_size)
                 display_df.rename(columns={'Total_Price': 'New Final Price(Rs)'}, inplace=True)
-                
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
                 
-                # PDF uses PROCESSED DF directly
                 hist_pdf = create_history_pdf(pdf_party, processed_df, "Lifetime Record")
                 c1, c2 = st.columns(2)
                 with c1: st.download_button("📥 Download PDF", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf", use_container_width=True)
@@ -879,9 +918,7 @@ elif menu == "🔍 Part Price Finder":
         if filtered_df.empty: st.warning("No entries found.")
         elif search_party_name == "-- All Parties --" and search_part_name == "-- All Items --": st.info("Select to search.")
         else:
-            # BUG FIX: Use Processed DF for Search too
             processed_df = prepare_display_df_with_history(filtered_df)
-            
             display_df = processed_df[['Date', 'Old Date', 'Party', 'Size', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']].copy()
             display_df['Size'] = display_df['Size'].apply(format_size)
             display_df.rename(columns={'Total_Price': 'New Final Price(Rs)'}, inplace=True)
