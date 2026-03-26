@@ -140,16 +140,14 @@ def get_spare_details(row_options, total_price):
         except: basic = 0
     return basic, gst, hsn
 
-# --- OLD vs NEW PRICE TRACKER LOGIC ---
+# --- BUG FIX: Process DataFrame for OLD vs NEW Price without dropping columns ---
 def prepare_display_df_with_history(df):
-    # Chronological sort required to track "old" prices correctly
+    df = df.copy() # Copy to prevent warnings
     df['DateObj'] = pd.to_datetime(df['Date'], format="%d-%m-%Y", errors='coerce')
-    df = df.sort_values('DateObj')
+    df = df.sort_values('DateObj') # Sort from oldest to newest
 
     basics, gsts, hsns = [], [], []
     old_dates, old_prices = [], []
-    
-    # Dictionary to remember the last time this party bought this item
     history_tracker = {}
 
     for idx, row in df.iterrows():
@@ -158,7 +156,6 @@ def prepare_display_df_with_history(df):
         current_price = row.get('Total_Price', 0)
         current_date = str(row['Date'])
         
-        # Unique key for Party + Item
         tracking_key = f"{party_name}_{item_name}"
         
         if tracking_key in history_tracker:
@@ -176,17 +173,16 @@ def prepare_display_df_with_history(df):
         else:
             basics.append("-"); gsts.append("-"); hsns.append("-")
             
+    # Add new columns to the full dataframe
     df['Old Date'] = old_dates
     df['Old Price'] = old_prices
     df['HSN Code'] = hsns
     df['Basic Price'] = basics
     df['GST'] = gsts
-    df['Size'] = df['Size'].apply(format_size)
     
-    # Reverse sort to show newest entries on top of screen
+    # Sort newest to oldest for display
     df = df.sort_values('DateObj', ascending=False)
-    
-    return df[['Date', 'Old Date', 'Party', 'Size', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']]
+    return df
 
 # --- SMART FRACTION PARSER & CONVERTER ---
 def parse_smart_size(val_str):
@@ -216,7 +212,7 @@ def mm_to_foot_inch(mm_val):
     inches = total_inches % 12
     return f"{feet} Foot {inches:.1f} Inch"
 
-# --- PDF GENERATOR (With Apple Safari Support Preview) ---
+# --- PDF GENERATORS ---
 def display_pdf_in_app(pdf_buffer):
     base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
     pdf_display = f'''<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="450" type="application/pdf" style="border: 2px solid #ccc; border-radius: 8px;"></iframe>'''
@@ -229,10 +225,8 @@ def draw_grid_lines(c, y_top, y_bot, cols):
     c.line(cols[0], y_bot, cols[-1], y_bot)
     for col in cols: c.line(col, y_top, col, y_bot)
 
-# --- PDF FOR PARTY HISTORY (Includes Old Date & Old Price) ---
 def create_history_pdf(party, records_df, period_str="Lifetime"):
     buffer = io.BytesIO()
-    # Using Landscape format to fit all columns clearly
     from reportlab.lib.pagesizes import landscape
     c = canvas.Canvas(buffer, pagesize=landscape(A4))
     width, height = landscape(A4)
@@ -243,16 +237,13 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
     c.drawString(width - 150, height - 60, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
     y = height - 90; c.setFont("Helvetica-Bold", 10)
-    # Define columns for Landscape
     cols = [40, 105, 170, 480, 545, 600, 680, 780]
-    c.drawString(cols[0]+5, y+5, "New Date")
-    c.drawString(cols[1]+5, y+5, "Old Date")
+    c.drawString(cols[0]+5, y+5, "New Date"); c.drawString(cols[1]+5, y+5, "Old Date")
     c.drawString(cols[2]+5, y+5, "Item Description / Details (With Basic/GST)")
-    c.drawString(cols[3]+5, y+5, "HSN")
-    c.drawString(cols[4]+5, y+5, "Old Price")
+    c.drawString(cols[3]+5, y+5, "HSN"); c.drawString(cols[4]+5, y+5, "Old Price")
     c.drawString(cols[5]+5, y+5, "New Final Price")
     
-    draw_grid_lines(c, y+20, y-5, [cols[0], cols[1], cols[2], cols[3], cols[5], cols[7]]) # Adjust outer boundaries
+    draw_grid_lines(c, y+20, y-5, [cols[0], cols[1], cols[2], cols[3], cols[5], cols[7]])
     y -= 25; c.setFont("Helvetica", 9); grand_total = 0
 
     for index, row in records_df.iterrows():
@@ -275,8 +266,7 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
             grand_total += total_price; y -= 20
         else:
             c.drawString(cols[2]+5, y, f"Machine: {format_size(str(row['Size']))} | Speed: {row['Speed']}")
-            y -= 15
-            c.setFont("Helvetica-Oblique", 8)
+            y -= 15; c.setFont("Helvetica-Oblique", 8)
             addons_dict = {}
             try: addons_dict = json.loads(row.get('Options', '{}'))
             except: pass
@@ -289,9 +279,8 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
         if y < 80:
             c.showPage(); y = height - 50; c.setFont("Helvetica-Bold", 10)
             c.drawString(cols[0]+5, y+5, "New Date"); c.drawString(cols[1]+5, y+5, "Old Date")
-            c.drawString(cols[2]+5, y+5, "Item Description / Details")
-            c.drawString(cols[3]+5, y+5, "HSN"); c.drawString(cols[4]+5, y+5, "Old Price")
-            c.drawString(cols[5]+5, y+5, "New Final Price")
+            c.drawString(cols[2]+5, y+5, "Item Description / Details"); c.drawString(cols[3]+5, y+5, "HSN")
+            c.drawString(cols[4]+5, y+5, "Old Price"); c.drawString(cols[5]+5, y+5, "New Final Price")
             draw_grid_lines(c, y+20, y-5, [cols[0], cols[1], cols[2], cols[3], cols[5], cols[7]]); y -= 25
         
     c.setFont("Helvetica-Bold", 12); c.drawString(40, y-25, f"{period_str.upper()} TOTAL VALUE: Rs. {grand_total:,.2f}/-")
@@ -312,8 +301,7 @@ def create_part_search_pdf(party_name, part_name, df):
     cols = [40, 105, 170, 320, 520, 570, 640, 780]
     c.drawString(cols[0]+5, y+5, "New Date"); c.drawString(cols[1]+5, y+5, "Old Date")
     c.drawString(cols[2]+5, y+5, "Party Name"); c.drawString(cols[3]+5, y+5, "Item Details")
-    c.drawString(cols[4]+5, y+5, "HSN"); c.drawString(cols[5]+5, y+5, "Old Price")
-    c.drawString(cols[6]+5, y+5, "New Price")
+    c.drawString(cols[4]+5, y+5, "HSN"); c.drawString(cols[5]+5, y+5, "Old Price"); c.drawString(cols[6]+5, y+5, "New Price")
     draw_grid_lines(c, y+20, y-5, [cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7]]); y -= 25
     
     for index, row in df.iterrows():
@@ -334,8 +322,7 @@ def create_part_search_pdf(party_name, part_name, df):
             y -= 20
         else:
             c.drawString(cols[3]+5, y, f"Machine: {format_size(str(row['Size']))}")
-            y -= 15
-            c.setFont("Helvetica-Oblique", 8); c.drawString(cols[3]+15, y, f"• {row['Speed']}"); y -= 15
+            y -= 15; c.setFont("Helvetica-Oblique", 8); c.drawString(cols[3]+15, y, f"• {row['Speed']}"); y -= 15
             
         draw_grid_lines(c, y_start, y, [cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7]])
         if y < 80:
@@ -486,7 +473,6 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                 size_in_mm = convert_to_mm(size_val, cut_unit)
                 total_used_mm = (size_in_mm + blade_margin) * cut_qty
                 
-                # Show Balance Calculation
                 current_in = stock_df[stock_df['Material Name'] == cut_mat]['Total Length (MM)'].sum() if not stock_df.empty else 0
                 current_out = hexo_df[hexo_df['Material Name'] == cut_mat]['Total Used (MM)'].sum() if not hexo_df.empty else 0
                 current_balance = current_in - current_out
@@ -810,15 +796,18 @@ elif menu == "📜 Party History & Edit":
             if pdf_party != "-- Select Party --":
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
                 
-                # Use the new Old/New logic function
-                display_df = prepare_display_df_with_history(party_df)
+                # BUG FIX: Get FULL Processed DF with Old Dates
+                processed_df = prepare_display_df_with_history(party_df)
                 
-                # Display nicely on screen
+                # Setup Display Dataframe (Subset of columns)
+                display_df = processed_df[['Date', 'Old Date', 'Party', 'Size', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']].copy()
+                display_df['Size'] = display_df['Size'].apply(format_size)
                 display_df.rename(columns={'Total_Price': 'New Final Price(Rs)'}, inplace=True)
+                
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
                 
-                # Download PDF with Landscape format
-                hist_pdf = create_history_pdf(pdf_party, party_df, "Lifetime Record")
+                # PDF uses PROCESSED DF directly
+                hist_pdf = create_history_pdf(pdf_party, processed_df, "Lifetime Record")
                 c1, c2 = st.columns(2)
                 with c1: st.download_button("📥 Download PDF", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf", use_container_width=True)
                 with c2: 
@@ -890,12 +879,16 @@ elif menu == "🔍 Part Price Finder":
         if filtered_df.empty: st.warning("No entries found.")
         elif search_party_name == "-- All Parties --" and search_part_name == "-- All Items --": st.info("Select to search.")
         else:
-            # Use the History Tracking DF here as well to see Old Prices!
-            display_df = prepare_display_df_with_history(filtered_df)
+            # BUG FIX: Use Processed DF for Search too
+            processed_df = prepare_display_df_with_history(filtered_df)
+            
+            display_df = processed_df[['Date', 'Old Date', 'Party', 'Size', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']].copy()
+            display_df['Size'] = display_df['Size'].apply(format_size)
             display_df.rename(columns={'Total_Price': 'New Final Price(Rs)'}, inplace=True)
+            
             st.dataframe(display_df, use_container_width=True, hide_index=True)
             
-            pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, filtered_df)
+            pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, processed_df)
             c1, c2 = st.columns(2)
             with c1: st.download_button("📥 Download PDF", data=pdf_buffer, file_name="Search_Result.pdf", mime="application/pdf", use_container_width=True)
             with c2: 
