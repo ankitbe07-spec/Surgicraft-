@@ -194,7 +194,6 @@ def draw_grid_lines(c, y_top, y_bot, cols):
     c.line(cols[0], y_bot, cols[-1], y_bot)
     for col in cols: c.line(col, y_top, col, y_bot)
 
-# ... (History, Search, and Factory PDF Generators) ...
 def create_history_pdf(party, records_df, period_str="Lifetime"):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -389,7 +388,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
     if alert_list: st.error(f"🚨 **ALERT!** Nichena maal no stock 5 Foot thi occho che: **{', '.join(alert_list)}**")
 
     st.write("### 🪚 Hexo Cutting & Live Balance Dashboard")
-    htab1, htab2, htab3 = st.tabs(["✂️ Cutting Entry (Stock Out)", "📥 Navo Maal Aavyo (Stock In)", "📊 Search Godown & PDF"])
+    htab1, htab2, htab3, htab4 = st.tabs(["✂️ Cutting Entry", "📥 Navo Maal Aavyo", "📊 Search Godown & PDF", "✏️ Edit / Delete"])
     
     with htab1:
         st.write("**Ankit bhai mate - Cutting Entry & Estimator:**")
@@ -492,8 +491,108 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                         with c_pv: 
                             if st.button(f"👁️ View Preview", key=f"pv_{mat}", use_container_width=True): display_pdf_in_app(pdf_buf)
 
+    # NEW: TAB 4 FOR EDIT & DELETE IN HEXO CUTTING
+    with htab4:
+        st.write("**✏️ Edit ke Delete Karo (Hexo & Stock):**")
+        edit_type = st.radio("Shu sudharvu che?", ["✂️ Cutting Entry (Stock Out)", "📥 Stock Entry (Navo Maal)"], horizontal=True)
+        
+        if edit_type == "✂️ Cutting Entry (Stock Out)":
+            if hexo_df.empty:
+                st.info("Koi cutting entry nathi.")
+            else:
+                h_df = hexo_df.copy()
+                h_df['Display'] = h_df['Date'].astype(str) + " | " + h_df['Material Name'].astype(str) + " | Size: " + h_df['Cut Size'].astype(str) + " | Qty: " + h_df['Quantity'].astype(str)
+                sel_h_rec = st.selectbox("Select Record to Edit (Cutting):", h_df['Display'].tolist())
+                
+                if sel_h_rec:
+                    r_d = h_df[h_df['Display'] == sel_h_rec].iloc[0]
+                    e1, e2 = st.columns(2)
+                    c_mat_index = stock_materials_full.index(str(r_d['Material Name'])) if str(r_d['Material Name']) in stock_materials_full else 0
+                    n_mat = e1.selectbox("Edit Material Name:", stock_materials_full, index=c_mat_index)
+                    
+                    orig_size = str(r_d['Cut Size'])
+                    o_unit = "MM"
+                    if "Inch" in orig_size: o_unit = "Inch"
+                    elif "Foot" in orig_size: o_unit = "Foot"
+                    o_val_str = orig_size.replace('MM', '').replace('Inch', '').replace('Foot', '').strip()
+                    
+                    st.write("**Cut Size & Unit:**")
+                    es1, es2 = st.columns(2)
+                    n_cut = es1.text_input("Edit Size:", value=o_val_str)
+                    n_unit = es2.selectbox("Edit Unit:", ["MM", "Inch", "Foot"], index=["MM", "Inch", "Foot"].index(o_unit))
+                    
+                    e3, e4 = st.columns(2)
+                    n_qty = e3.number_input("Edit Qty:", value=int(r_d['Quantity']), min_value=1)
+                    n_margin = e4.number_input("Edit Margin (MM):", value=float(r_d['Blade Margin (MM)']), step=0.1)
+                    
+                    b1, b2 = st.columns(2)
+                    if b1.button("💾 Update Cutting", type="primary"):
+                        n_val = parse_smart_size(n_cut)
+                        if n_val > 0:
+                            n_mm = convert_to_mm(n_val, n_unit)
+                            n_total = (n_mm + n_margin) * n_qty
+                            n_disp_size = f"{n_cut} {n_unit}"
+                            
+                            all_vals = sheet_hexo.get_all_values()
+                            for i, r in enumerate(all_vals):
+                                if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Material Name']) and str(r[2]) == str(r_d['Cut Size']) and str(r[3]) == str(r_d['Quantity']):
+                                    sheet_hexo.update(f"B{i+1}:F{i+1}", [[n_mat, n_disp_size, n_qty, n_margin, n_total]])
+                                    st.success("Updated Successfully!"); st.cache_resource.clear(); st.rerun(); break
+                        else: st.error("Invalid Size format.")
+                            
+                    if b2.button("❌ Delete Cutting"):
+                        all_vals = sheet_hexo.get_all_values()
+                        for i, r in enumerate(all_vals):
+                            if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Material Name']) and str(r[2]) == str(r_d['Cut Size']) and str(r[3]) == str(r_d['Quantity']):
+                                sheet_hexo.delete_rows(i+1); st.success("Deleted Successfully!"); st.cache_resource.clear(); st.rerun(); break
+
+        else: # Edit Stock Entry
+            if stock_df.empty:
+                st.info("Koi stock entry nathi.")
+            else:
+                s_df = stock_df.copy()
+                s_df['Display'] = s_df['Date'].astype(str) + " | " + s_df['Material Name'].astype(str) + " | Total MM: " + s_df['Total Length (MM)'].astype(str)
+                sel_s_rec = st.selectbox("Select Record to Edit (Stock):", s_df['Display'].tolist())
+                
+                if sel_s_rec:
+                    r_d = s_df[s_df['Display'] == sel_s_rec].iloc[0]
+                    st.write("---")
+                    e1, e2 = st.columns(2)
+                    n_mat = e1.text_input("Edit Material Name:", value=str(r_d['Material Name']))
+                    n_wt = e2.number_input("Edit Weight (KG):", value=float(r_d.get('Weight (KG)', 0.0)))
+                    
+                    st.write("**Nevi Lumbai Nakho (Keep blank to keep old):**")
+                    es1, es2 = st.columns(2)
+                    n_len = es1.text_input("New Length (e.g., 20 ke 20 1/2):", value="")
+                    n_unit = es2.selectbox("New Unit:", ["Foot", "Inch", "MM"])
+                    
+                    b1, b2 = st.columns(2)
+                    if b1.button("💾 Update Stock", type="primary"):
+                        if n_len:
+                            n_val = parse_smart_size(n_len)
+                            if n_val > 0:
+                                n_total_mm = convert_to_mm(n_val, n_unit)
+                                n_total_ft = n_total_mm / 304.8
+                            else: st.error("Invalid Size"); st.stop()
+                        else:
+                            n_total_mm = float(r_d['Total Length (MM)'])
+                            n_total_ft = float(r_d['Total Length (Foot)'])
+                            
+                        all_vals = sheet_stock.get_all_values()
+                        for i, r in enumerate(all_vals):
+                            if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Material Name']) and str(r[3]) == str(r_d['Total Length (MM)']):
+                                sheet_stock.update(f"B{i+1}:E{i+1}", [[n_mat, n_total_ft, n_total_mm, n_wt]])
+                                st.success("Updated Successfully!"); st.cache_resource.clear(); st.rerun(); break
+                                
+                    if b2.button("❌ Delete Stock"):
+                        all_vals = sheet_stock.get_all_values()
+                        for i, r in enumerate(all_vals):
+                            if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Material Name']) and str(r[3]) == str(r_d['Total Length (MM)']):
+                                sheet_stock.delete_rows(i+1); st.success("Deleted Successfully!"); st.cache_resource.clear(); st.rerun(); break
+
+
 # ==========================================
-# 2. FACTORY PARTS & CUTTING MANAGER 
+# 2. FACTORY PARTS & CUTTING MANAGER (Junu Menu)
 # ==========================================
 elif menu == "✂️ Factory Parts & Cutting":
     display_header()
