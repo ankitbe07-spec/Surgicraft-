@@ -63,46 +63,52 @@ if 'q_no' not in st.session_state: st.session_state.q_no = f"SUR/{datetime.now()
 
 # --- GOOGLE SHEETS CONNECTION ---
 @st.cache_resource
-def get_sheet():
-    info = json.loads(st.secrets["google_key"])
-    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_info(info, scopes=scope)
-    client = gspread.authorize(creds)
-    return client.open("Surgicraft_Database").sheet1
-
-@st.cache_resource
-def get_factory_sheet():
+def get_sheets():
     info = json.loads(st.secrets["google_key"])
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_info(info, scopes=scope)
     client = gspread.authorize(creds)
     db = client.open("Surgicraft_Database")
-    try:
-        return db.worksheet("Factory_Data")
+    
+    try: sheet_main = db.worksheet("Sheet1")
+    except: sheet_main = db.sheet1
+    
+    try: sheet_factory = db.worksheet("Factory_Data")
+    except: 
+        sheet_factory = db.add_worksheet(title="Factory_Data", rows="1000", cols="10")
+        sheet_factory.append_row(["Date", "Raw Material", "Part Name", "Cutting Size", "Quantity"])
+        
+    try: sheet_stock = db.worksheet("Master_Stock")
     except:
-        ws = db.add_worksheet(title="Factory_Data", rows="1000", cols="10")
-        ws.append_row(["Date", "Raw Material", "Part Name", "Cutting Size", "Quantity"])
-        return ws
+        sheet_stock = db.add_worksheet(title="Master_Stock", rows="1000", cols="10")
+        sheet_stock.append_row(["Date", "Material Name", "Total Length (Foot)", "Total Length (MM)", "Weight (KG)"])
+        
+    try: sheet_hexo = db.worksheet("Hexo_Cutting")
+    except:
+        sheet_hexo = db.add_worksheet(title="Hexo_Cutting", rows="1000", cols="10")
+        sheet_hexo.append_row(["Date", "Material Name", "Cut Size (MM)", "Quantity", "Blade Margin (MM)", "Total Used (MM)"])
+        
+    return sheet_main, sheet_factory, sheet_stock, sheet_hexo
 
 # Fetch data early
 try:
-    sheet = get_sheet()
-    all_sheet_data = sheet.get_all_records()
-    main_df = pd.DataFrame(all_sheet_data) if all_sheet_data else pd.DataFrame()
+    sheet_main, sheet_factory, sheet_stock, sheet_hexo = get_sheets()
     
+    main_df = pd.DataFrame(sheet_main.get_all_records()) if sheet_main.get_all_records() else pd.DataFrame()
     unique_parties_list = sorted(main_df['Party'].astype(str).str.strip().str.title().unique().tolist()) if not main_df.empty else []
     unique_parts_list = sorted(main_df[main_df['Speed'] == 'Spare Part']['Size'].astype(str).str.strip().unique().tolist()) if not main_df.empty else []
     all_items_list = sorted(main_df['Size'].astype(str).str.strip().unique().tolist()) if not main_df.empty else []
     
-    factory_sheet = get_factory_sheet()
-    all_factory_data = factory_sheet.get_all_records()
-    factory_df = pd.DataFrame(all_factory_data) if all_factory_data else pd.DataFrame()
-    
+    factory_df = pd.DataFrame(sheet_factory.get_all_records()) if sheet_factory.get_all_records() else pd.DataFrame()
     unique_materials = sorted(factory_df['Raw Material'].astype(str).str.strip().unique().tolist()) if not factory_df.empty else []
     unique_materials = [x for x in unique_materials if x and x != 'nan']
-    
     unique_factory_parts = sorted(factory_df['Part Name'].astype(str).str.strip().unique().tolist()) if not factory_df.empty else []
     unique_factory_parts = [x for x in unique_factory_parts if x and x != 'nan']
+    
+    stock_df = pd.DataFrame(sheet_stock.get_all_records()) if sheet_stock.get_all_records() else pd.DataFrame()
+    hexo_df = pd.DataFrame(sheet_hexo.get_all_records()) if sheet_hexo.get_all_records() else pd.DataFrame()
+    
+    stock_materials = stock_df['Material Name'].astype(str).str.strip().unique().tolist() if not stock_df.empty else []
     
 except Exception as e:
     st.error(f"Google Sheet Connection Error! Error: {e}")
@@ -117,8 +123,7 @@ def format_size(size_str):
     return size_str
 
 def format_size_for_ui(size_str):
-    if size_str in ["-- All Items --", "-- New Part --"]:
-        return size_str
+    if size_str in ["-- All Items --", "-- New Part --"]: return size_str
     return format_size(str(size_str))
 
 def get_spare_details(row_options, total_price):
@@ -135,7 +140,6 @@ def get_spare_details(row_options, total_price):
         except: basic = 0
     return basic, gst, hsn
 
-# --- DATA PROCESSOR FOR DISPLAY TABLES ---
 def prepare_display_df(df):
     basics, gsts, hsns = [], [], []
     for idx, row in df.iterrows():
@@ -176,6 +180,13 @@ def display_header():
         st.markdown("<h1 style='margin-bottom: 0px; padding-bottom: 0px; color: #FF0000;'>Surgicraft Industries</h1>", unsafe_allow_html=True)
     st.markdown("<p style='color: #00b300; font-weight: bold; margin-top: 0px;'>Created by Ankit Mistry</p>", unsafe_allow_html=True)
     st.write("---")
+
+# --- CONVERTER HELPER ---
+def mm_to_foot_inch(mm_val):
+    total_inches = mm_val / 25.4
+    feet = int(total_inches // 12)
+    inches = total_inches % 12
+    return f"{feet} Foot {inches:.1f} Inch"
 
 # --- PDF GENERATOR (History) ---
 def create_history_pdf(party, records_df, period_str="Lifetime"):
@@ -329,40 +340,27 @@ def create_factory_pdf(raw_material, search_part, df):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     
-    # Header
     c.setFont("Helvetica-Bold", 14)
     c.drawString(40, 800, "Surgicraft Factory Production & Cutting List")
     c.setFont("Helvetica", 10)
-    if raw_material and raw_material != "-- All Materials --":
-        c.drawString(40, 780, f"Material Filter: {raw_material}")
-    else:
-        c.drawString(40, 780, "Material Filter: All")
+    if raw_material and raw_material != "-- All Materials --": c.drawString(40, 780, f"Material Filter: {raw_material}")
+    else: c.drawString(40, 780, "Material Filter: All")
         
-    if search_part and search_part != "-- All Parts --":
-        c.drawString(220, 780, f"Part Filter: {search_part}")
-    else:
-        c.drawString(220, 780, f"Part Filter: All")
+    if search_part and search_part != "-- All Parts --": c.drawString(220, 780, f"Part Filter: {search_part}")
+    else: c.drawString(220, 780, f"Part Filter: All")
         
     c.drawString(420, 780, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
-    # Table Header (Excel style)
     y = 740
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(45, y+5, "Date")
-    c.drawString(105, y+5, "Raw Material")
-    c.drawString(235, y+5, "Part Name")
-    c.drawString(405, y+5, "Cutting Size")
-    c.drawString(505, y+5, "Qty")
+    c.drawString(45, y+5, "Date"); c.drawString(105, y+5, "Raw Material"); c.drawString(235, y+5, "Part Name")
+    c.drawString(405, y+5, "Cutting Size"); c.drawString(505, y+5, "Qty")
     
     def draw_grid_lines(y_top, y_bot):
-        c.line(40, y_top, 550, y_top) 
-        c.line(40, y_bot, 550, y_bot) 
-        c.line(40, y_top, 40, y_bot)
-        c.line(100, y_top, 100, y_bot)
-        c.line(230, y_top, 230, y_bot)
-        c.line(400, y_top, 400, y_bot)
-        c.line(500, y_top, 500, y_bot)
-        c.line(550, y_top, 550, y_bot)
+        c.line(40, y_top, 550, y_top); c.line(40, y_bot, 550, y_bot)
+        c.line(40, y_top, 40, y_bot); c.line(100, y_top, 100, y_bot)
+        c.line(230, y_top, 230, y_bot); c.line(400, y_top, 400, y_bot)
+        c.line(500, y_top, 500, y_bot); c.line(550, y_top, 550, y_bot)
 
     draw_grid_lines(y+20, y)
     
@@ -370,17 +368,13 @@ def create_factory_pdf(raw_material, search_part, df):
     for index, row in df.iterrows():
         y -= row_h
         if y < 50:
-            c.showPage()
-            y = 800
-            c.setFont("Helvetica-Bold", 10)
+            c.showPage(); y = 800; c.setFont("Helvetica-Bold", 10)
             c.drawString(45, y+5, "Date"); c.drawString(105, y+5, "Raw Material"); c.drawString(235, y+5, "Part Name")
             c.drawString(405, y+5, "Cutting Size"); c.drawString(505, y+5, "Qty")
-            draw_grid_lines(y+20, y)
-            y -= row_h
+            draw_grid_lines(y+20, y); y -= row_h
             
         c.setFont("Helvetica", 10)
         c.drawString(45, y+7, str(row['Date'])[:10])
-        
         raw_mat = str(row['Raw Material'])
         if len(raw_mat) > 20: raw_mat = raw_mat[:18] + ".."
         c.drawString(105, y+7, raw_mat)
@@ -389,14 +383,73 @@ def create_factory_pdf(raw_material, search_part, df):
         if len(part_name) > 28: part_name = part_name[:26] + ".."
         c.drawString(235, y+7, part_name)
         
-        # Mota Akshar for Cutting Size
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(405, y+7, str(row['Cutting Size']))
-        
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(505, y+7, str(row['Quantity']))
-        
+        c.setFont("Helvetica-Bold", 12); c.drawString(405, y+7, str(row['Cutting Size']))
+        c.setFont("Helvetica-Bold", 11); c.drawString(505, y+7, str(row['Quantity']))
         draw_grid_lines(y+row_h, y)
+        
+    c.save(); buffer.seek(0)
+    return buffer
+
+# --- HEXO CUTTING PDF GENERATOR (EXCEL GRID STYLE) ---
+def create_hexo_pdf(mat_name, mat_in, mat_out, balance_mm, df):
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(40, 800, "Surgicraft Godown Balance & Cutting Report")
+    
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, 775, f"Material: {mat_name}")
+    c.drawString(400, 775, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
+    
+    c.setFont("Helvetica", 11)
+    c.drawString(40, 755, f"📥 Total In (Aavyo): {mm_to_foot_inch(mat_in)}")
+    c.drawString(40, 740, f"✂️ Total Out (Kapayo): {mm_to_foot_inch(mat_out)}")
+    
+    c.setFont("Helvetica-Bold", 12)
+    c.setFillColorRGB(0, 0.5, 0) # Green text
+    c.drawString(40, 720, f"✅ Balance (Padyo che): {mm_to_foot_inch(balance_mm)} ({balance_mm:.1f} MM)")
+    c.setFillColorRGB(0, 0, 0) # Back to black
+    
+    y = 690
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(45, y+5, "Date")
+    c.drawString(110, y+5, "Cut Size (MM)")
+    c.drawString(200, y+5, "Qty")
+    c.drawString(250, y+5, "Blade Margin")
+    c.drawString(340, y+5, "Total Used (MM)")
+    
+    def draw_grid(y_top, y_bot):
+        c.line(40, y_top, 450, y_top)
+        c.line(40, y_bot, 450, y_bot)
+        c.line(40, y_top, 40, y_bot)
+        c.line(105, y_top, 105, y_bot)
+        c.line(195, y_top, 195, y_bot)
+        c.line(245, y_top, 245, y_bot)
+        c.line(335, y_top, 335, y_bot)
+        c.line(450, y_top, 450, y_bot)
+        
+    draw_grid(y+20, y)
+    row_h = 25
+    
+    for index, row in df.iterrows():
+        y -= row_h
+        if y < 50:
+            c.showPage()
+            y = 800
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(45, y+5, "Date"); c.drawString(110, y+5, "Cut Size (MM)"); c.drawString(200, y+5, "Qty")
+            c.drawString(250, y+5, "Blade Margin"); c.drawString(340, y+5, "Total Used (MM)")
+            draw_grid(y+20, y)
+            y -= row_h
+            
+        c.setFont("Helvetica", 10)
+        c.drawString(45, y+7, str(row['Date'])[:10])
+        c.drawString(110, y+7, str(row['Cut Size (MM)']))
+        c.drawString(200, y+7, str(row['Quantity']))
+        c.drawString(250, y+7, str(row['Blade Margin (MM)']))
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(340, y+7, str(row['Total Used (MM)']))
+        draw_grid(y+row_h, y)
         
     c.save()
     buffer.seek(0)
@@ -404,7 +457,14 @@ def create_factory_pdf(raw_material, search_part, df):
 
 # --- SIDEBAR MENU ---
 st.sidebar.title("🏥 Surgicraft Menu")
-menu = st.sidebar.radio("Go to:", ["➕ Add New Entry", "📜 Party History & Edit", "🔍 Part Price Finder", "✂️ Factory Parts & Cutting", "⚙️ Master Settings"])
+menu = st.sidebar.radio("Go to:", [
+    "➕ Add New Entry", 
+    "📜 Party History & Edit", 
+    "🔍 Part Price Finder", 
+    "✂️ Factory Parts & Cutting", 
+    "🪚 Hexo Cutting (Live Stock)", 
+    "⚙️ Master Settings"
+])
 
 # ==========================================
 # 1. ADD NEW ENTRY PAGE
@@ -464,7 +524,7 @@ if menu == "➕ Add New Entry":
                 if not party_name: st.warning("Please enter/select Party Name first!")
                 else:
                     dt = datetime.now().strftime("%d-%m-%Y")
-                    sheet.append_row([st.session_state.q_no, party_name, dt, size, speed, json.dumps(addons_prices_struct), final_total_price])
+                    sheet_main.append_row([st.session_state.q_no, party_name, dt, size, speed, json.dumps(addons_prices_struct), final_total_price])
                     st.toast(f"{format_size(size)} Machine Saved for {party_name}! ✅")
                     st.cache_resource.clear()
                     st.rerun()
@@ -499,7 +559,7 @@ if menu == "➕ Add New Entry":
             else:
                 dt = datetime.now().strftime("%d-%m-%Y")
                 options_json = json.dumps({"Basic": basic_price, "GST": gst_rate, "HSN": hsn_val})
-                sheet.append_row([st.session_state.q_no, party_name, dt, part_name, "Spare Part", options_json, final_calc_price])
+                sheet_main.append_row([st.session_state.q_no, party_name, dt, part_name, "Spare Part", options_json, final_calc_price])
                 st.toast(f"{format_size(part_name)} Saved for {party_name}! ✅")
                 st.cache_resource.clear()
                 st.rerun()
@@ -561,11 +621,10 @@ elif menu == "📜 Party History & Edit":
                         new_price = st.number_input("Edit Total Price (Rs):", value=int(float(row_data['Total_Price'])), step=100)
                     
                     if st.button("💾 Update Record in Sheet", type="primary"):
-                        all_values = sheet.get_all_values()
+                        all_values = sheet_main.get_all_values()
                         row_index_to_update = -1
                         for i, row_vals in enumerate(all_values):
                             if i == 0: continue
-                            # SMART MATCHING
                             if (row_vals[1].strip().title() == edit_party and 
                                 str(row_vals[2]).strip() == str(row_data['Date']).strip() and 
                                 str(row_vals[3]).strip() == str(row_data['Size']).strip()):
@@ -573,9 +632,9 @@ elif menu == "📜 Party History & Edit":
                                 break
                                 
                         if row_index_to_update != -1:
-                            sheet.update_cell(row_index_to_update, 4, new_item)
-                            sheet.update_cell(row_index_to_update, 7, new_price)
-                            if is_spare: sheet.update_cell(row_index_to_update, 6, json.dumps({"Basic": new_basic, "GST": new_gst, "HSN": new_hsn}))
+                            sheet_main.update_cell(row_index_to_update, 4, new_item)
+                            sheet_main.update_cell(row_index_to_update, 7, new_price)
+                            if is_spare: sheet_main.update_cell(row_index_to_update, 6, json.dumps({"Basic": new_basic, "GST": new_gst, "HSN": new_hsn}))
                             st.success("Record Updated Successfully!")
                             st.cache_resource.clear()
                             st.rerun()
@@ -592,7 +651,7 @@ elif menu == "📜 Party History & Edit":
                 if selected_del:
                     del_row_data = del_items[del_items['Display'] == selected_del].iloc[0]
                     if st.button("❌ Delete Permanently", type="primary"):
-                        all_values = sheet.get_all_values()
+                        all_values = sheet_main.get_all_values()
                         row_index_to_del = -1
                         for i, row_vals in enumerate(all_values):
                             if i == 0: continue
@@ -603,7 +662,7 @@ elif menu == "📜 Party History & Edit":
                                 break
                                 
                         if row_index_to_del != -1:
-                            sheet.delete_rows(row_index_to_del)
+                            sheet_main.delete_rows(row_index_to_del)
                             st.success("Record Deleted Successfully!")
                             st.cache_resource.clear()
                             st.rerun()
@@ -647,7 +706,7 @@ elif menu == "🔍 Part Price Finder":
                 if st.button("👁️ View Preview", use_container_width=True): display_pdf_in_app(pdf_buffer)
 
 # ==========================================
-# 5. FACTORY PARTS & CUTTING MANAGER 
+# 4. FACTORY PARTS & CUTTING MANAGER 
 # ==========================================
 elif menu == "✂️ Factory Parts & Cutting":
     display_header()
@@ -675,7 +734,7 @@ elif menu == "✂️ Factory Parts & Cutting":
             if not raw_val or not part_val or not cut_size: st.warning("Please fill Raw Material, Part Name and Cutting Size!")
             else:
                 dt_str = datetime.now().strftime("%d-%m-%Y")
-                factory_sheet.append_row([dt_str, str(raw_val).strip(), str(part_val).strip(), str(cut_size).strip(), int(qty)])
+                sheet_factory.append_row([dt_str, str(raw_val).strip(), str(part_val).strip(), str(cut_size).strip(), int(qty)])
                 st.toast("Cutting Record Saved! ✅")
                 st.cache_resource.clear()
                 st.rerun()
@@ -685,17 +744,12 @@ elif menu == "✂️ Factory Parts & Cutting":
         
         sc1, sc2 = st.columns(2)
         search_raw = sc1.selectbox("1. Select Raw Material:", ["-- All Materials --"] + unique_materials)
-        
-        # CHANGED TO SELECTBOX FOR AUTO-COMPLETE AS REQUESTED
         search_part = sc2.selectbox("2. Select Part Name:", ["-- All Parts --"] + unique_factory_parts)
         
         f_df = factory_df.copy()
         if not f_df.empty:
-            if search_raw != "-- All Materials --":
-                f_df = f_df[f_df['Raw Material'].astype(str).str.strip() == search_raw]
-                
-            if search_part != "-- All Parts --":
-                f_df = f_df[f_df['Part Name'].astype(str).str.strip() == search_part]
+            if search_raw != "-- All Materials --": f_df = f_df[f_df['Raw Material'].astype(str).str.strip() == search_raw]
+            if search_part != "-- All Parts --": f_df = f_df[f_df['Part Name'].astype(str).str.strip() == search_part]
                 
             st.dataframe(f_df, use_container_width=True)
             total_qty = f_df['Quantity'].sum() if 'Quantity' in f_df.columns else 0
@@ -730,7 +784,7 @@ elif menu == "✂️ Factory Parts & Cutting":
                 
                 c_btn1, c_btn2 = st.columns(2)
                 if c_btn1.button("💾 Update Record", type="primary"):
-                    all_f_vals = factory_sheet.get_all_values()
+                    all_f_vals = sheet_factory.get_all_values()
                     row_idx_f = -1
                     for i, r_vals in enumerate(all_f_vals):
                         if i == 0: continue
@@ -739,14 +793,14 @@ elif menu == "✂️ Factory Parts & Cutting":
                             row_idx_f = i + 1; break
                             
                     if row_idx_f != -1:
-                        factory_sheet.update(f"B{row_idx_f}:E{row_idx_f}", [[new_f_raw, new_f_part, new_f_cut, new_f_qty]])
+                        sheet_factory.update(f"B{row_idx_f}:E{row_idx_f}", [[new_f_raw, new_f_part, new_f_cut, new_f_qty]])
                         st.success("Record Updated!")
                         st.cache_resource.clear()
                         st.rerun()
                     else: st.error("Row not found for update.")
                         
                 if c_btn2.button("❌ Delete Record"):
-                    all_f_vals = factory_sheet.get_all_values()
+                    all_f_vals = sheet_factory.get_all_values()
                     row_idx_f = -1
                     for i, r_vals in enumerate(all_f_vals):
                         if i == 0: continue
@@ -755,14 +809,98 @@ elif menu == "✂️ Factory Parts & Cutting":
                             row_idx_f = i + 1; break
                             
                     if row_idx_f != -1:
-                        factory_sheet.delete_rows(row_idx_f)
+                        sheet_factory.delete_rows(row_idx_f)
                         st.success("Record Deleted!")
                         st.cache_resource.clear()
                         st.rerun()
                     else: st.error("Row not found for deletion.")
 
 # ==========================================
-# 4. MASTER SETTINGS PAGE
+# 5. HEXO CUTTING (LIVE STOCK) - NEW!
+# ==========================================
+elif menu == "🪚 Hexo Cutting (Live Stock)":
+    display_header()
+    st.write("### 🪚 Hexo Cutting & Live Balance Dashboard")
+    
+    htab1, htab2, htab3 = st.tabs(["📥 Navo Maal Aavyo (Stock In)", "✂️ Hexo/Cutter Entry (Stock Out)", "📊 Live Godown & PDF"])
+    
+    with htab1:
+        st.write("**Papa mate - Navo maal aave tyare ahiya nakhvo:**")
+        col1, col2 = st.columns(2)
+        new_mat_name = col1.text_input("1. Raw Material Naam (e.g., SS 304 28MM Round, MS 1\" Patti):")
+        total_foot = col2.number_input("2. Total Ladi Lumbai (Foot ma):", min_value=0.0, step=1.0)
+        weight_kg = st.number_input("3. Total Vajan (KG) - Optional:", min_value=0.0, step=1.0)
+        
+        if st.button("💾 Save Navo Maal", type="primary"):
+            if not new_mat_name or total_foot <= 0:
+                st.warning("Please material nu naam ane lumbai nakho!")
+            else:
+                dt_str = datetime.now().strftime("%d-%m-%Y")
+                total_mm = total_foot * 304.8 
+                sheet_stock.append_row([dt_str, new_mat_name.strip(), total_foot, total_mm, weight_kg])
+                st.toast(f"{new_mat_name} no stock aavi gayo! ✅")
+                st.cache_resource.clear()
+                st.rerun()
+
+    with htab2:
+        st.write("**Ankit bhai mate - Cutting Entry:**")
+        c1, c2 = st.columns(2)
+        cut_mat = c1.selectbox("1. Material Select Karo:", ["-- Select --"] + stock_materials)
+        cut_size = c2.number_input("2. Cut Size (MM ma):", min_value=0.0, step=1.0)
+        
+        c3, c4 = st.columns(2)
+        cut_qty = c3.number_input("3. Tukda ni Quantity (Nang):", min_value=1, step=1)
+        blade_type = c4.selectbox("4. Kyo Blade Vaparyo?", ["Hexo Blade (1.5mm Margin)", "Cutoff Wheel (3.0mm Margin)"])
+        
+        margin_mm = 1.5 if "Hexo" in blade_type else 3.0
+        
+        if cut_size > 0 and cut_qty > 0:
+            total_used_mm = (cut_size + margin_mm) * cut_qty
+            st.info(f"**Ganatri:** ({cut_size}mm + {margin_mm}mm blade) x {cut_qty} nang = **{total_used_mm} MM Total Kapayo**")
+            
+            if st.button("✂️ Kapi Nakho (Save Cutting)", type="primary"):
+                if cut_mat == "-- Select --": st.warning("Material Select karo!")
+                else:
+                    dt_str = datetime.now().strftime("%d-%m-%Y")
+                    sheet_hexo.append_row([dt_str, cut_mat, cut_size, cut_qty, margin_mm, total_used_mm])
+                    st.success("Cutting save thai gayu! Stock minus thai gayo che.")
+                    st.cache_resource.clear()
+                    st.rerun()
+
+    with htab3:
+        st.write("**Live Godown Balance (Tijori no Hisab):**")
+        search_mat = st.selectbox("Check Balance (Search Box):", ["-- All --"] + stock_materials)
+        
+        if not stock_df.empty:
+            for mat in (stock_materials if search_mat == "-- All --" else [search_mat]):
+                mat_in = stock_df[stock_df['Material Name'] == mat]['Total Length (MM)'].sum()
+                mat_hexo_df = hexo_df[hexo_df['Material Name'] == mat] if not hexo_df.empty else pd.DataFrame()
+                mat_out = mat_hexo_df['Total Used (MM)'].sum() if not mat_hexo_df.empty else 0
+                
+                balance_mm = mat_in - mat_out
+                
+                if balance_mm < 1524: 
+                    st.error(f"🚨 **ALERT!** {mat} no stock 5 Foot thi occho che! Jaldi order aapo.")
+                
+                with st.expander(f"📦 {mat} | Balance: {mm_to_foot_inch(balance_mm)} ({balance_mm:.1f} MM)", expanded=True):
+                    sc1, sc2, sc3 = st.columns(3)
+                    sc1.metric("Aavyo Hato (Total In)", mm_to_foot_inch(mat_in))
+                    sc2.metric("Kapayo (Total Out)", mm_to_foot_inch(mat_out))
+                    sc3.metric("Padyo che (Live Balance)", mm_to_foot_inch(balance_mm))
+                    
+                    if balance_mm < 0:
+                        st.warning("Aapdo balance Minus ma che. Papa ne kaho navo maal entry kare chopda ma!")
+                    
+                    st.write("---")
+                    # PDF GENERATION FOR LIVE STOCK
+                    pdf_buf = create_hexo_pdf(mat, mat_in, mat_out, balance_mm, mat_hexo_df)
+                    c_btn1, c_btn2 = st.columns(2)
+                    with c_btn1: st.download_button("📥 Download PDF (Stock Report)", data=pdf_buf, file_name=f"{mat}_Stock.pdf", mime="application/pdf", use_container_width=True)
+                    with c_btn2: 
+                        if st.button(f"👁️ View {mat} Preview", use_container_width=True): display_pdf_in_app(pdf_buf)
+
+# ==========================================
+# 6. MASTER SETTINGS PAGE
 # ==========================================
 elif menu == "⚙️ Master Settings":
     display_header()
