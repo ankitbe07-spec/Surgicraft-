@@ -63,56 +63,67 @@ if 'q_no' not in st.session_state: st.session_state.q_no = f"SUR/{datetime.now()
 # --- GOOGLE SHEETS CONNECTION ---
 @st.cache_resource
 def get_sheets():
-    try:
-        info = json.loads(st.secrets["google_key"])
-        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(info, scopes=scope)
-        client = gspread.authorize(creds)
-        db = client.open("Surgicraft_Database")
+    info = json.loads(st.secrets["google_key"])
+    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(info, scopes=scope)
+    client = gspread.authorize(creds)
+    db = client.open("Surgicraft_Database")
+    
+    try: sheet_main = db.worksheet("Sheet1")
+    except: sheet_main = db.sheet1
+    
+    try: sheet_factory = db.worksheet("Factory_Data")
+    except: 
+        sheet_factory = db.add_worksheet(title="Factory_Data", rows="1000", cols="10")
+        sheet_factory.append_row(["Date", "Raw Material", "Part Name", "Cutting Size", "Quantity"])
         
-        try: sheet_main = db.worksheet("Sheet1")
-        except: sheet_main = db.sheet1
+    try: sheet_stock = db.worksheet("Master_Stock")
+    except:
+        sheet_stock = db.add_worksheet(title="Master_Stock", rows="1000", cols="10")
+        sheet_stock.append_row(["Date", "Material Name", "Total Length (Foot)", "Total Length (MM)", "Weight (KG)"])
         
-        try: sheet_factory = db.worksheet("Factory_Data")
-        except: 
-            sheet_factory = db.add_worksheet(title="Factory_Data", rows="1000", cols="10")
-            sheet_factory.append_row(["Date", "Raw Material", "Part Name", "Cutting Size", "Quantity"])
-            
-        try: sheet_stock = db.worksheet("Master_Stock")
-        except:
-            sheet_stock = db.add_worksheet(title="Master_Stock", rows="1000", cols="10")
-            sheet_stock.append_row(["Date", "Material Name", "Total Length (Foot)", "Total Length (MM)", "Weight (KG)"])
-            
-        try: sheet_hexo = db.worksheet("Hexo_Cutting")
-        except:
-            sheet_hexo = db.add_worksheet(title="Hexo_Cutting", rows="1000", cols="10")
-            sheet_hexo.append_row(["Date", "Material Name", "Cut Size", "Quantity", "Blade Margin (MM)", "Total Used (MM)"])
-            
-        return sheet_main, sheet_factory, sheet_stock, sheet_hexo
-    except Exception as e:
-        st.error(f"Google Sheet Connection Error: {e}")
-        st.stop()
+    try: sheet_hexo = db.worksheet("Hexo_Cutting")
+    except:
+        sheet_hexo = db.add_worksheet(title="Hexo_Cutting", rows="1000", cols="10")
+        sheet_hexo.append_row(["Date", "Material Name", "Cut Size", "Quantity", "Blade Margin (MM)", "Total Used (MM)"])
+        
+    return sheet_main, sheet_factory, sheet_stock, sheet_hexo
+
+# --- SMART CACHE (Anti-Ban System to prevent Google Error 429) ---
+@st.cache_data(ttl=300)
+def fetch_all_data():
+    sheet_m, sheet_f, sheet_s, sheet_h = get_sheets()
+    m_rec = sheet_m.get_all_records()
+    f_rec = sheet_f.get_all_records()
+    s_rec = sheet_s.get_all_records()
+    h_rec = sheet_h.get_all_records()
+    return (
+        pd.DataFrame(m_rec) if m_rec else pd.DataFrame(),
+        pd.DataFrame(f_rec) if f_rec else pd.DataFrame(),
+        pd.DataFrame(s_rec) if s_rec else pd.DataFrame(),
+        pd.DataFrame(h_rec) if h_rec else pd.DataFrame()
+    )
+
+def clear_all_caches():
+    st.cache_data.clear()
+    st.cache_resource.clear()
 
 try:
     sheet_main, sheet_factory, sheet_stock, sheet_hexo = get_sheets()
+    main_df, factory_df, stock_df, hexo_df = fetch_all_data()
     
-    main_df = pd.DataFrame(sheet_main.get_all_records()) if sheet_main.get_all_records() else pd.DataFrame()
     unique_parties_list = sorted(main_df['Party'].astype(str).str.strip().str.title().unique().tolist()) if not main_df.empty else []
     unique_parts_list = sorted(main_df[main_df['Speed'] == 'Spare Part']['Size'].astype(str).str.strip().unique().tolist()) if not main_df.empty else []
     all_items_list = sorted(main_df['Size'].astype(str).str.strip().unique().tolist()) if not main_df.empty else []
     
-    factory_df = pd.DataFrame(sheet_factory.get_all_records()) if sheet_factory.get_all_records() else pd.DataFrame()
     unique_materials = sorted(factory_df['Raw Material'].astype(str).str.strip().unique().tolist()) if not factory_df.empty else []
     unique_materials = [x for x in unique_materials if x and x != 'nan']
     unique_factory_parts = sorted(factory_df['Part Name'].astype(str).str.strip().unique().tolist()) if not factory_df.empty else []
     unique_factory_parts = [x for x in unique_factory_parts if x and x != 'nan']
     
-    stock_df = pd.DataFrame(sheet_stock.get_all_records()) if sheet_stock.get_all_records() else pd.DataFrame()
-    hexo_df = pd.DataFrame(sheet_hexo.get_all_records()) if sheet_hexo.get_all_records() else pd.DataFrame()
-    
     stock_materials_full = sorted(stock_df['Material Name'].astype(str).str.strip().unique().tolist()) if not stock_df.empty else []
 except Exception as e:
-    st.error(f"Error reading data: {e}")
+    st.error(f"Google Sheet Connection Error: {e}")
     st.stop()
 
 # --- HELPER FORMAT FUNCTIONS ---
@@ -154,7 +165,6 @@ def prepare_display_df_with_history(df):
         party_name = str(row['Party']).strip().lower()
         current_price = row.get('Total_Price', 0)
         current_date = str(row['Date'])
-        
         tracking_key = f"{party_name}_{item_name}"
         
         if tracking_key in history_tracker:
@@ -208,7 +218,7 @@ def mm_to_foot_inch(mm_val):
     inches = total_inches % 12
     return f"{feet} Foot {inches:.1f} Inch"
 
-# --- SMART PDF GENERATORS (Upgraded Grid & Alignment) ---
+# --- SMART PDF GENERATORS ---
 def display_pdf_in_app(pdf_buffer):
     base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
     pdf_display = f'''<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="450" type="application/pdf" style="border: 2px solid #ccc; border-radius: 8px;"></iframe>'''
@@ -217,9 +227,9 @@ def display_pdf_in_app(pdf_buffer):
 
 def draw_grid_lines(c, y_top, y_bot, cols):
     c.setLineWidth(0.5)
-    c.line(cols[0], y_top, cols[-1], y_top) # Top horizontal
-    c.line(cols[0], y_bot, cols[-1], y_bot) # Bottom horizontal
-    for col in cols: c.line(col, y_top, col, y_bot) # Vertical lines
+    c.line(cols[0], y_top, cols[-1], y_top) 
+    c.line(cols[0], y_bot, cols[-1], y_bot) 
+    for col in cols: c.line(col, y_top, col, y_bot) 
 
 def create_history_pdf(party, records_df, period_str="Lifetime"):
     buffer = io.BytesIO()
@@ -234,26 +244,21 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
     
     y = height - 90
     c.setFont("Helvetica-Bold", 10)
-    # Perfect column widths for A4 Landscape (842 width)
     cols = [40, 110, 180, 500, 560, 660, 780] 
     
-    # Headers
-    row_y_top = y + 20
-    row_y_bot = y - 5
+    row_y_top = y + 20; row_y_bot = y - 5
     c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date")
     c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
     c.drawString(cols[2]+5, y+2, "Item Description / Details (With Basic/GST)")
     c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "HSN")
     c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Old Price")
     c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "New Final Price")
-    draw_grid_lines(c, row_y_top, row_y_bot, cols)
-    y = row_y_bot
+    draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
     grand_total = 0
 
     for index, row in records_df.iterrows():
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
         
-        # Check page break
         needed_height = 20
         if str(row['Speed']) != "Spare Part":
             needed_height = 30
@@ -268,8 +273,7 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
             c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Old Price"); c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "New Final Price")
             draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
 
-        row_y_top = y
-        text_y = y - 15 # Padding from top
+        row_y_top = y; text_y = y - 15 
         
         c.setFont("Helvetica-Bold", 9)
         c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date']))
@@ -277,14 +281,14 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
         c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['HSN Code'])[:8])
         
         old_price_str = f"{row['Old Price']:,.2f}" if row['Old Price'] != "-" else "-"
-        c.drawRightString(cols[5]-5, text_y, old_price_str) # Right aligned
-        c.drawRightString(cols[6]-5, text_y, f"{total_price:,.2f}") # Right aligned
+        c.drawRightString(cols[5]-5, text_y, old_price_str)
+        c.drawRightString(cols[6]-5, text_y, f"{total_price:,.2f}")
         
         c.setFont("Helvetica", 9)
         if str(row['Speed']) == "Spare Part":
             part_display = f"Part: {format_size(str(row['Size']))} (Basic: Rs.{row['Basic Price']} | GST: {row['GST']})"
             c.drawString(cols[2]+5, text_y, part_display[:75])
-            grand_total += total_price; y = text_y - 5 # Padding from bottom
+            grand_total += total_price; y = text_y - 5
         else:
             c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))} | Speed: {row['Speed']}")
             temp_y = text_y - 15
@@ -292,16 +296,13 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
             try: addons_dict = json.loads(row.get('Options', '{}'))
             except: addons_dict = {}
             for name, price in addons_dict.items():
-                c.drawString(cols[2]+15, temp_y, f"• Add-on: {name}")
-                temp_y -= 15
+                c.drawString(cols[2]+15, temp_y, f"• Add-on: {name}"); temp_y -= 15
             grand_total += total_price; y = temp_y + 5
 
-        row_y_bot = y
-        draw_grid_lines(c, row_y_top, row_y_bot, cols)
+        row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
         
     y -= 25; c.setFont("Helvetica-Bold", 12); c.drawString(40, y, f"{period_str.upper()} TOTAL VALUE: Rs. {grand_total:,.2f}/-")
-    c.save(); buffer.seek(0)
-    return buffer
+    c.save(); buffer.seek(0); return buffer
 
 def create_part_search_pdf(party_name, part_name, df):
     buffer = io.BytesIO()
@@ -316,8 +317,7 @@ def create_part_search_pdf(party_name, part_name, df):
     y = height-110; c.setFont("Helvetica-Bold", 10)
     cols = [40, 110, 180, 320, 540, 590, 680, 780]
     
-    row_y_top = y + 20
-    row_y_bot = y - 5
+    row_y_top = y + 20; row_y_bot = y - 5
     c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date"); c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
     c.drawString(cols[2]+5, y+2, "Party Name"); c.drawString(cols[3]+5, y+2, "Item Details")
     c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "HSN"); c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "Old Price")
@@ -326,8 +326,8 @@ def create_part_search_pdf(party_name, part_name, df):
     
     for index, row in df.iterrows():
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
-        
         needed_height = 20 if str(row['Speed']) == "Spare Part" else 35
+        
         if y - needed_height < 50:
             c.showPage(); y = height-50; c.setFont("Helvetica-Bold", 10)
             row_y_top = y+20; row_y_bot = y-5
@@ -337,8 +337,7 @@ def create_part_search_pdf(party_name, part_name, df):
             c.drawCentredString((cols[6]+cols[7])/2.0, y+2, "New Price")
             draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
 
-        row_y_top = y
-        text_y = y - 15
+        row_y_top = y; text_y = y - 15
         
         c.setFont("Helvetica-Bold", 9)
         c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date']))
@@ -359,8 +358,7 @@ def create_part_search_pdf(party_name, part_name, df):
             c.setFont("Helvetica-Oblique", 8); c.drawString(cols[3]+15, text_y-15, f"• {row['Speed']}")
             y = text_y - 20
             
-        row_y_bot = y
-        draw_grid_lines(c, row_y_top, row_y_bot, cols)
+        row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
             
     c.save(); buffer.seek(0); return buffer
 
@@ -375,10 +373,8 @@ def create_factory_pdf(raw_material, search_part, df):
     cols = [40, 100, 240, 420, 500, 550]
     row_y_top = y + 20; row_y_bot = y - 5
     
-    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date")
-    c.drawString(cols[1]+5, y+2, "Raw Material")
-    c.drawString(cols[2]+5, y+2, "Part Name")
-    c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Cutting Size")
+    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date"); c.drawString(cols[1]+5, y+2, "Raw Material")
+    c.drawString(cols[2]+5, y+2, "Part Name"); c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Cutting Size")
     c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Qty")
     draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
     
@@ -391,8 +387,7 @@ def create_factory_pdf(raw_material, search_part, df):
             c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Qty")
             draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
             
-        row_y_top = y
-        text_y = y - 15
+        row_y_top = y; text_y = y - 15
         c.setFont("Helvetica", 9)
         c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date'])[:10])
         c.drawString(cols[1]+5, text_y, str(row['Raw Material'])[:22])
@@ -400,8 +395,7 @@ def create_factory_pdf(raw_material, search_part, df):
         c.setFont("Helvetica-Bold", 10); c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['Cutting Size']))
         c.setFont("Helvetica", 10); c.drawCentredString((cols[4]+cols[5])/2.0, text_y, str(row['Quantity']))
         
-        row_y_bot = text_y - 5
-        draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
+        row_y_bot = text_y - 5; draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
         
     c.save(); buffer.seek(0); return buffer
 
@@ -420,10 +414,8 @@ def create_hexo_pdf(mat_name, mat_in, mat_out, balance_mm, df):
     cols = [40, 105, 195, 255, 345, 550]
     row_y_top = y + 20; row_y_bot = y - 5
     
-    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date")
-    c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Cut Size")
-    c.drawCentredString((cols[2]+cols[3])/2.0, y+2, "Qty")
-    c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Blade Margin")
+    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date"); c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Cut Size")
+    c.drawCentredString((cols[2]+cols[3])/2.0, y+2, "Qty"); c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Blade Margin")
     c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Total Used (MM)")
     draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
     
@@ -436,8 +428,7 @@ def create_hexo_pdf(mat_name, mat_in, mat_out, balance_mm, df):
             c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Total Used (MM)")
             draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
             
-        row_y_top = y
-        text_y = y - 15
+        row_y_top = y; text_y = y - 15
         c.setFont("Helvetica", 9)
         c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date'])[:10])
         c.drawCentredString((cols[1]+cols[2])/2.0, text_y, str(row['Cut Size']))
@@ -446,11 +437,9 @@ def create_hexo_pdf(mat_name, mat_in, mat_out, balance_mm, df):
         c.setFont("Helvetica-Bold", 10)
         c.drawRightString(cols[5]-10, text_y, f"{float(row['Total Used (MM)']):.1f}")
         
-        row_y_bot = text_y - 5
-        draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
+        row_y_bot = text_y - 5; draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
         
-    c.save(); buffer.seek(0)
-    return buffer
+    c.save(); buffer.seek(0); return buffer
 
 def display_header():
     col1, col2 = st.columns([1, 15])
@@ -494,8 +483,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
         
         c1, c2 = st.columns(2)
         mat_sel = c1.selectbox("1. Material Select Karo:", ["-- Select --", "-- New Material --"] + stock_materials_full)
-        if mat_sel == "-- New Material --":
-            cut_mat = c1.text_input("📝 Navu Material Lakho (e.g. Hex 22mm 304):")
+        if mat_sel == "-- New Material --": cut_mat = c1.text_input("📝 Navu Material Lakho (e.g. Hex 22mm 304):")
         else: cut_mat = mat_sel
         
         st.write("**2. Cut Size (e.g., 65, 4 1/8, 4.25):**")
@@ -505,7 +493,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
         
         c3, c4 = st.columns(2)
         cut_qty = c3.number_input("3. Tukda ni Quantity (Nang):", min_value=1, step=1)
-        blade_margin = c4.number_input("4. Blade Margin (Wastage) - Edit karo:", value=1.5, step=0.1)
+        blade_margin = c4.number_input("4. Blade Margin (Wastage):", value=1.5, step=0.1)
         
         st.write("---")
         st.write("🧠 **Live Ganatri (Estimator):**")
@@ -538,7 +526,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                     display_size = f'{cut_size_str} {cut_unit}'
                     sheet_hexo.append_row([dt_str, cut_mat.strip(), display_size, cut_qty, blade_margin, total_used_mm])
                     st.success("Cutting save thai gayu! ✅")
-                    st.cache_resource.clear(); st.rerun()
+                    clear_all_caches(); st.rerun()
             elif size_val < 0: st.error("Invalid Size! Format check karo (e.g. 65 or 4 1/8)")
 
     with htab2:
@@ -558,7 +546,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                 total_mm = convert_to_mm(in_val, in_unit)
                 total_foot = total_mm / 304.8
                 sheet_stock.append_row([datetime.now().strftime("%d-%m-%Y"), new_mat_name.strip(), total_foot, total_mm, weight_kg])
-                st.toast(f"{new_mat_name} aavi gayo! ✅"); st.cache_resource.clear(); st.rerun()
+                st.toast(f"{new_mat_name} aavi gayo! ✅"); clear_all_caches(); st.rerun()
 
     with htab3:
         st.write("**🔍 Smart Search & Godown PDF:**")
@@ -594,8 +582,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
         edit_type = st.radio("Shu sudharvu che?", ["✂️ Cutting Entry (Stock Out)", "📥 Stock Entry (Navo Maal)"], horizontal=True)
         
         if edit_type == "✂️ Cutting Entry (Stock Out)":
-            if hexo_df.empty:
-                st.info("Koi cutting entry nathi.")
+            if hexo_df.empty: st.info("Koi cutting entry nathi.")
             else:
                 h_df = hexo_df.copy()
                 h_df['Display'] = h_df['Date'].astype(str) + " | " + h_df['Material Name'].astype(str) + " | Size: " + h_df['Cut Size'].astype(str) + " | Qty: " + h_df['Quantity'].astype(str)
@@ -629,23 +616,21 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                             n_mm = convert_to_mm(n_val, n_unit)
                             n_total = (n_mm + n_margin) * n_qty
                             n_disp_size = f"{n_cut} {n_unit}"
-                            
                             all_vals = sheet_hexo.get_all_values()
                             for i, r in enumerate(all_vals):
                                 if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Material Name']) and str(r[2]) == str(r_d['Cut Size']) and str(r[3]) == str(r_d['Quantity']):
                                     sheet_hexo.update(f"B{i+1}:F{i+1}", [[n_mat, n_disp_size, n_qty, n_margin, n_total]])
-                                    st.success("Updated Successfully!"); st.cache_resource.clear(); st.rerun(); break
+                                    st.success("Updated!"); clear_all_caches(); st.rerun(); break
                         else: st.error("Invalid Size format.")
                             
                     if b2.button("❌ Delete Cutting"):
                         all_vals = sheet_hexo.get_all_values()
                         for i, r in enumerate(all_vals):
                             if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Material Name']) and str(r[2]) == str(r_d['Cut Size']) and str(r[3]) == str(r_d['Quantity']):
-                                sheet_hexo.delete_rows(i+1); st.success("Deleted Successfully!"); st.cache_resource.clear(); st.rerun(); break
+                                sheet_hexo.delete_rows(i+1); st.success("Deleted!"); clear_all_caches(); st.rerun(); break
 
         else:
-            if stock_df.empty:
-                st.info("Koi stock entry nathi.")
+            if stock_df.empty: st.info("Koi stock entry nathi.")
             else:
                 s_df = stock_df.copy()
                 s_df['Display'] = s_df['Date'].astype(str) + " | " + s_df['Material Name'].astype(str) + " | Total MM: " + s_df['Total Length (MM)'].astype(str)
@@ -668,28 +653,25 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                         if n_len:
                             n_val = parse_smart_size(n_len)
                             if n_val > 0:
-                                n_total_mm = convert_to_mm(n_val, n_unit)
-                                n_total_ft = n_total_mm / 304.8
+                                n_total_mm = convert_to_mm(n_val, n_unit); n_total_ft = n_total_mm / 304.8
                             else: st.error("Invalid Size"); st.stop()
                         else:
-                            n_total_mm = float(r_d['Total Length (MM)'])
-                            n_total_ft = float(r_d['Total Length (Foot)'])
+                            n_total_mm = float(r_d['Total Length (MM)']); n_total_ft = float(r_d['Total Length (Foot)'])
                             
                         all_vals = sheet_stock.get_all_values()
                         for i, r in enumerate(all_vals):
                             if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Material Name']) and str(r[3]) == str(r_d['Total Length (MM)']):
                                 sheet_stock.update(f"B{i+1}:E{i+1}", [[n_mat, n_total_ft, n_total_mm, n_wt]])
-                                st.success("Updated Successfully!"); st.cache_resource.clear(); st.rerun(); break
+                                st.success("Updated!"); clear_all_caches(); st.rerun(); break
                                 
                     if b2.button("❌ Delete Stock"):
                         all_vals = sheet_stock.get_all_values()
                         for i, r in enumerate(all_vals):
                             if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Material Name']) and str(r[3]) == str(r_d['Total Length (MM)']):
-                                sheet_stock.delete_rows(i+1); st.success("Deleted Successfully!"); st.cache_resource.clear(); st.rerun(); break
-
+                                sheet_stock.delete_rows(i+1); st.success("Deleted!"); clear_all_caches(); st.rerun(); break
 
 # ==========================================
-# 2. FACTORY PARTS & CUTTING MANAGER
+# 2. FACTORY PARTS & CUTTING MANAGER 
 # ==========================================
 elif menu == "✂️ Factory Parts & Cutting":
     display_header()
@@ -711,7 +693,7 @@ elif menu == "✂️ Factory Parts & Cutting":
             if not raw_val or not part_val or not cut_size: st.warning("Fill all details!")
             else:
                 sheet_factory.append_row([datetime.now().strftime("%d-%m-%Y"), raw_val.strip(), part_val.strip(), cut_size.strip(), int(qty)])
-                st.toast("Saved! ✅"); st.cache_resource.clear(); st.rerun()
+                st.toast("Saved! ✅"); clear_all_caches(); st.rerun()
                 
     with tabB:
         sc1, sc2 = st.columns(2)
@@ -752,11 +734,11 @@ elif menu == "✂️ Factory Parts & Cutting":
                     for i, r in enumerate(sheet_factory.get_all_values()):
                         if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Raw Material']) and r[2] == str(r_d['Part Name']) and str(r[3]) == str(r_d['Cutting Size']):
                             sheet_factory.update(f"B{i+1}:E{i+1}", [[n_raw, n_prt, n_cut, n_qty]])
-                            st.success("Updated!"); st.cache_resource.clear(); st.rerun(); break
+                            st.success("Updated!"); clear_all_caches(); st.rerun(); break
                 if b2.button("❌ Delete"):
                     for i, r in enumerate(sheet_factory.get_all_values()):
                         if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Raw Material']) and r[2] == str(r_d['Part Name']) and str(r[3]) == str(r_d['Cutting Size']):
-                            sheet_factory.delete_rows(i+1); st.success("Deleted!"); st.cache_resource.clear(); st.rerun(); break
+                            sheet_factory.delete_rows(i+1); st.success("Deleted!"); clear_all_caches(); st.rerun(); break
 
 # ==========================================
 # 3. ADD NEW ENTRY PAGE
@@ -801,7 +783,7 @@ elif menu == "➕ Add New Entry":
                 if not party_name: st.warning("Please enter Party Name!")
                 else:
                     sheet_main.append_row([st.session_state.q_no, party_name, datetime.now().strftime("%d-%m-%Y"), size, speed, json.dumps(addons_prices_struct), final_total_price])
-                    st.toast("Saved! ✅"); st.cache_resource.clear(); st.rerun()
+                    st.toast("Saved! ✅"); clear_all_caches(); st.rerun()
 
     else:
         st.write("### Add Spare Part Details")
@@ -822,7 +804,7 @@ elif menu == "➕ Add New Entry":
             if not party_name or not part_name or final_calc_price <= 0: st.warning("Please enter all details!")
             else:
                 sheet_main.append_row([st.session_state.q_no, party_name, datetime.now().strftime("%d-%m-%Y"), part_name, "Spare Part", json.dumps({"Basic": basic_price, "GST": gst_rate, "HSN": hsn_val}), final_calc_price])
-                st.toast("Saved! ✅"); st.cache_resource.clear(); st.rerun()
+                st.toast("Saved! ✅"); clear_all_caches(); st.rerun()
 
 # ==========================================
 # 4. PARTY HISTORY & EDIT PAGE 
@@ -883,7 +865,7 @@ elif menu == "📜 Party History & Edit":
                             sheet_main.update_cell(row_index_to_update, 4, new_item)
                             sheet_main.update_cell(row_index_to_update, 7, new_price)
                             if is_spare: sheet_main.update_cell(row_index_to_update, 6, json.dumps({"Basic": new_basic, "GST": new_gst, "HSN": new_hsn}))
-                            st.success("Updated!"); st.cache_resource.clear(); st.rerun()
+                            st.success("Updated!"); clear_all_caches(); st.rerun()
 
         with tab3:
             del_party = st.selectbox("1. Select Party (Delete):", ["-- Select Party --"] + unique_parties_list)
@@ -896,7 +878,7 @@ elif menu == "📜 Party History & Edit":
                     all_values = sheet_main.get_all_values()
                     for i, r in enumerate(all_values):
                         if i > 0 and r[1].strip().title() == del_party and str(r[2]).strip() == str(del_row_data['Date']).strip() and str(r[3]).strip() == str(del_row_data['Size']).strip():
-                            sheet_main.delete_rows(i + 1); st.success("Deleted!"); st.cache_resource.clear(); st.rerun(); break
+                            sheet_main.delete_rows(i + 1); st.success("Deleted!"); clear_all_caches(); st.rerun(); break
 
 # ==========================================
 # 5. PART PRICE FINDER PAGE 
