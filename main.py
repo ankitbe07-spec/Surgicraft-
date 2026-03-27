@@ -89,7 +89,7 @@ def get_sheets():
         
     return sheet_main, sheet_factory, sheet_stock, sheet_hexo
 
-# --- SMART CACHE ---
+# --- SMART CACHE (Anti-Ban Fix) ---
 @st.cache_data(ttl=300)
 def fetch_all_data():
     sheet_m, sheet_f, sheet_s, sheet_h = get_sheets()
@@ -218,7 +218,7 @@ def mm_to_foot_inch(mm_val):
     inches = total_inches % 12
     return f"{feet} Foot {inches:.1f} Inch"
 
-# --- PDF GENERATORS ---
+# --- SMART PDF GENERATORS ---
 def display_pdf_in_app(pdf_buffer):
     base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
     pdf_display = f'''<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="450" type="application/pdf" style="border: 2px solid #ccc; border-radius: 8px;"></iframe>'''
@@ -415,6 +415,9 @@ def create_factory_pdf(raw_material, search_part, df, orientation="Aadu (Landsca
         c.drawCentredString((cols[4]+cols[5])/2.0, text_y, final_sz)
         
         c.drawCentredString((cols[5]+cols[6])/2.0, text_y, str(row['Quantity']))
+        
+        # Empty column for writing date manually
+        # c.drawString((cols[6]+cols[7])/2.0, text_y, "") 
         
         row_y_bot = text_y - 5; draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
         
@@ -749,6 +752,7 @@ elif menu == "✂️ Factory Parts & Cutting":
             st.success(f"**Total Quantity: {f_df['Quantity'].sum()}**")
             
             st.write("---")
+            # --- PORTRAIT VS LANDSCAPE CHOICE ---
             pdf_format = st.radio("📄 PDF Design Format Select Karo:", ["Aadu (Landscape) - Best for Long Names", "Ubhu (Portrait)"], horizontal=True)
             
             f_pdf = create_factory_pdf(search_raw, search_part, f_df, orientation=pdf_format)
