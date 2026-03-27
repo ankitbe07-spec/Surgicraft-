@@ -89,7 +89,7 @@ def get_sheets():
         
     return sheet_main, sheet_factory, sheet_stock, sheet_hexo
 
-# --- SMART CACHE ---
+# --- SMART CACHE (Anti-Ban Fix) ---
 @st.cache_data(ttl=300)
 def fetch_all_data():
     sheet_m, sheet_f, sheet_s, sheet_h = get_sheets()
@@ -304,8 +304,8 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
         
         c.setFont("Helvetica", 9)
         if str(row['Speed']) == "Spare Part":
-            part_display = f"Part: {format_size(str(row['Size']))} (Basic: Rs.{row['Basic Price']} | GST: {row['GST']})"
-            c.drawString(cols[2]+5, text_y, part_display)
+            part_str = f"Part: {format_size(str(row['Size']))} (Basic: Rs.{row['Basic Price']} | GST: {row['GST']})"
+            c.drawString(cols[2]+5, text_y, part_str)
             grand_total += total_price; y = text_y - 5
         else:
             c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))} | Speed: {row['Speed']}")
@@ -368,7 +368,8 @@ def create_part_search_pdf(party_name, part_name, df):
 
         c.setFont("Helvetica", 9)
         if str(row['Speed']) == "Spare Part":
-            c.drawString(cols[3]+5, text_y, f"Part: {format_size(str(row['Size']))}")
+            part_str = f"Part: {format_size(str(row['Size']))}"
+            c.drawString(cols[3]+5, text_y, part_str)
             y = text_y - 5
         else:
             c.drawString(cols[3]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
@@ -789,7 +790,7 @@ elif menu == "✂️ Factory Parts & Cutting":
             
             if sel_rec:
                 r_d = edit_f_df[edit_f_df['Display'] == sel_rec].iloc[0]
-                e_d = st.date_input("Edit Date:", safe_date(r_d['Date']))
+                e_d = st.date_input("Edit Date:", safe_date(str(r_d['Date'])))
                 
                 e1, e2 = st.columns(2)
                 n_raw = e1.text_input("Edit Material:", value=str(r_d['Raw Material']))
@@ -797,7 +798,7 @@ elif menu == "✂️ Factory Parts & Cutting":
                 e3, e4, e5 = st.columns([1.5, 1.5, 1])
                 n_cut = e3.text_input("Edit Cutting Size:", value=str(r_d['Cutting Size']))
                 n_final = e4.text_input("Edit Final Size:", value=str(r_d.get('Final Size', '')))
-                n_qty = e5.number_input("Edit Qty:", value=safe_int(r_d['Quantity'], 1), min_value=1)
+                n_qty = e5.number_input("Edit Qty:", value=safe_int(r_d.get('Quantity', 1), 1), min_value=1)
                 
                 b1, b2 = st.columns(2)
                 if b1.button("💾 Update", type="primary"):
@@ -924,7 +925,7 @@ elif menu == "📜 Party History & Edit":
                     
                     if is_spare:
                         old_basic, old_gst, old_hsn = get_spare_details(row_data.get('Options', '{}'), row_data['Total_Price'])
-                        new_basic = st.number_input("Edit Basic Price:", value=old_basic, step=100)
+                        new_basic = st.number_input("Edit Basic Price:", value=safe_int(old_basic, 0), step=100)
                         
                         c1, c2 = st.columns(2)
                         with c1: 
