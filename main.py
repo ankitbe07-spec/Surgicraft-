@@ -218,7 +218,7 @@ def mm_to_foot_inch(mm_val):
     inches = total_inches % 12
     return f"{feet} Foot {inches:.1f} Inch"
 
-# --- SMART PDF GENERATORS ---
+# --- PDF GENERATORS ---
 def display_pdf_in_app(pdf_buffer):
     base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
     pdf_display = f'''<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="450" type="application/pdf" style="border: 2px solid #ccc; border-radius: 8px;"></iframe>'''
@@ -285,7 +285,7 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
         c.setFont("Helvetica", 9)
         if str(row['Speed']) == "Spare Part":
             part_display = f"Part: {format_size(str(row['Size']))} (Basic: Rs.{row['Basic Price']} | GST: {row['GST']})"
-            c.drawString(cols[2]+5, text_y, part_display[:75])
+            c.drawString(cols[2]+5, text_y, part_display)
             grand_total += total_price; y = text_y - 5
         else:
             c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))} | Speed: {row['Speed']}")
@@ -348,7 +348,8 @@ def create_part_search_pdf(party_name, part_name, df):
 
         c.setFont("Helvetica", 9)
         if str(row['Speed']) == "Spare Part":
-            c.drawString(cols[3]+5, text_y, f"Part: {format_size(str(row['Size']))}")[:40]
+            # FIXED BUG HERE - NO SLICING [:40] TO PREVENT TYPEERROR AND ALLOW FULL NAME
+            c.drawString(cols[3]+5, text_y, f"Part: {format_size(str(row['Size']))}")
             y = text_y - 5
         else:
             c.drawString(cols[3]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
@@ -730,8 +731,6 @@ elif menu == "✂️ Factory Parts & Cutting":
                 
     with tabB:
         st.write("🔍 **Smart Search & Filters:**")
-        
-        # --- NEW SMART SEARCH BOX ---
         search_kw_factory = st.text_input("Type here to Search (e.g. 20, MS, Stand):", "")
         
         sc1, sc2 = st.columns(2)
@@ -743,7 +742,6 @@ elif menu == "✂️ Factory Parts & Cutting":
             if search_raw != "-- All Materials --": f_df = f_df[f_df['Raw Material'].astype(str).str.strip() == search_raw]
             if search_part != "-- All Parts --": f_df = f_df[f_df['Part Name'].astype(str).str.strip() == search_part]
             
-            # --- SMART TEXT FILTER LOGIC ---
             if search_kw_factory:
                 mask = f_df[['Raw Material', 'Part Name', 'Cutting Size']].astype(str).apply(lambda x: x.str.contains(search_kw_factory, case=False, na=False)).any(axis=1)
                 f_df = f_df[mask]
@@ -752,7 +750,6 @@ elif menu == "✂️ Factory Parts & Cutting":
             st.success(f"**Total Quantity: {f_df['Quantity'].sum()}**")
             
             st.write("---")
-            # --- PORTRAIT VS LANDSCAPE CHOICE ---
             pdf_format = st.radio("📄 PDF Design Format Select Karo:", ["Aadu (Landscape) - Best for Long Names", "Ubhu (Portrait)"], horizontal=True)
             
             f_pdf = create_factory_pdf(search_raw, search_part, f_df, orientation=pdf_format)
