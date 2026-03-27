@@ -89,7 +89,7 @@ def get_sheets():
         
     return sheet_main, sheet_factory, sheet_stock, sheet_hexo
 
-# --- SMART CACHE (Anti-Ban Fix) ---
+# --- SMART CACHE ---
 @st.cache_data(ttl=300)
 def fetch_all_data():
     sheet_m, sheet_f, sheet_s, sheet_h = get_sheets()
@@ -125,6 +125,26 @@ try:
 except Exception as e:
     st.error(f"Google Sheet Connection Error: {e}")
     st.stop()
+
+# --- BULLETPROOF DATA CONVERTERS (To stop ValueErrors) ---
+def safe_int(val, fallback=1):
+    try:
+        if pd.isna(val) or val == '': return fallback
+        return int(float(val))
+    except:
+        return fallback
+
+def safe_float(val, fallback=0.0):
+    try:
+        if pd.isna(val) or val == '': return fallback
+        return float(val)
+    except:
+        return fallback
+
+def safe_date(val_str):
+    parsed = pd.to_datetime(val_str, format="%d-%m-%Y", errors='coerce')
+    if pd.isna(parsed): return datetime.today()
+    return parsed
 
 # --- HELPER FORMAT FUNCTIONS ---
 def format_size(size_str):
@@ -416,6 +436,9 @@ def create_factory_pdf(raw_material, search_part, df, orientation="Aadu (Landsca
         
         c.drawCentredString((cols[5]+cols[6])/2.0, text_y, str(row['Quantity']))
         
+        # Empty column for writing date manually
+        # c.drawString((cols[6]+cols[7])/2.0, text_y, "") 
+        
         row_y_bot = text_y - 5; draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
         
     c.save(); buffer.seek(0); return buffer
@@ -625,8 +648,8 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                     n_unit = es2.selectbox("Edit Unit:", ["MM", "Inch", "Foot"], index=["MM", "Inch", "Foot"].index(o_unit))
                     
                     e3, e4 = st.columns(2)
-                    n_qty = e3.number_input("Edit Qty:", value=int(r_d['Quantity']), min_value=1)
-                    n_margin = e4.number_input("Edit Margin (MM):", value=float(r_d['Blade Margin (MM)']), step=0.1)
+                    n_qty = e3.number_input("Edit Qty:", value=safe_int(r_d['Quantity'], 1), min_value=1)
+                    n_margin = e4.number_input("Edit Margin (MM):", value=safe_float(r_d['Blade Margin (MM)'], 1.5), step=0.1)
                     
                     b1, b2 = st.columns(2)
                     if b1.button("💾 Update Cutting", type="primary"):
@@ -660,7 +683,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                     st.write("---")
                     e1, e2 = st.columns(2)
                     n_mat = e1.text_input("Edit Material Name:", value=str(r_d['Material Name']))
-                    n_wt = e2.number_input("Edit Weight (KG):", value=float(r_d.get('Weight (KG)', 0.0)))
+                    n_wt = e2.number_input("Edit Weight (KG):", value=safe_float(r_d.get('Weight (KG)', 0.0)))
                     
                     st.write("**Nevi Lumbai Nakho (Keep blank to keep old):**")
                     es1, es2 = st.columns(2)
@@ -744,7 +767,6 @@ elif menu == "✂️ Factory Parts & Cutting":
                 
             st.dataframe(f_df, use_container_width=True)
             
-            # --- SAFE SUM AVOIDING TYPE-ERROR ---
             safe_qty = pd.to_numeric(f_df['Quantity'], errors='coerce').fillna(0).sum()
             st.success(f"**Total Quantity: {int(safe_qty)}**")
             
@@ -767,7 +789,7 @@ elif menu == "✂️ Factory Parts & Cutting":
             
             if sel_rec:
                 r_d = edit_f_df[edit_f_df['Display'] == sel_rec].iloc[0]
-                e_d = st.date_input("Edit Date:", pd.to_datetime(r_d['Date'], format="%d-%m-%Y", errors='coerce'))
+                e_d = st.date_input("Edit Date:", safe_date(r_d['Date']))
                 
                 e1, e2 = st.columns(2)
                 n_raw = e1.text_input("Edit Material:", value=str(r_d['Raw Material']))
@@ -775,7 +797,7 @@ elif menu == "✂️ Factory Parts & Cutting":
                 e3, e4, e5 = st.columns([1.5, 1.5, 1])
                 n_cut = e3.text_input("Edit Cutting Size:", value=str(r_d['Cutting Size']))
                 n_final = e4.text_input("Edit Final Size:", value=str(r_d.get('Final Size', '')))
-                n_qty = e5.number_input("Edit Qty:", value=int(r_d['Quantity']), min_value=1)
+                n_qty = e5.number_input("Edit Qty:", value=safe_int(r_d['Quantity'], 1), min_value=1)
                 
                 b1, b2 = st.columns(2)
                 if b1.button("💾 Update", type="primary"):
@@ -914,7 +936,7 @@ elif menu == "📜 Party History & Edit":
                                 
                         with c2: new_gst = st.selectbox("Edit GST:", [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28])))
                         new_price = new_basic + (new_basic * new_gst / 100)
-                    else: new_price = st.number_input("Edit Total Price:", value=int(float(row_data['Total_Price'])), step=100)
+                    else: new_price = st.number_input("Edit Total Price:", value=safe_int(row_data['Total_Price'], 0), step=100)
                     
                     if st.button("💾 Update Record", type="primary"):
                         all_values = sheet_main.get_all_values()
@@ -950,7 +972,6 @@ elif menu == "🔍 Part Price Finder":
     else:
         df = main_df.copy(); df['Clean_Party'] = df['Party'].astype(str).str.strip().str.title()
         
-        # --- NEW SMART SEARCH BOX ---
         search_kw_price = st.text_input("🔍 Smart Keyword Search (Type Part Name, Size, Machine e.g., 'Valve', '16x24'):", "")
         
         c1, c2 = st.columns(2)
@@ -962,7 +983,6 @@ elif menu == "🔍 Part Price Finder":
         if search_party_name != "-- All Parties --": filtered_df = filtered_df[filtered_df['Clean_Party'] == search_party_name]
         if search_part_name != "-- All Items --": filtered_df = filtered_df[filtered_df['Size'].astype(str).str.strip() == search_part_name]
         
-        # --- SMART TEXT FILTER LOGIC ---
         if search_kw_price:
             mask = filtered_df[['Size', 'Speed', 'Party']].astype(str).apply(lambda x: x.str.contains(search_kw_price, case=False, na=False)).any(axis=1)
             filtered_df = filtered_df[mask]
