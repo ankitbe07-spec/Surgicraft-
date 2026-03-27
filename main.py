@@ -442,6 +442,9 @@ def create_factory_pdf(raw_material, search_part, df, orientation="Aadu (Landsca
         
         c.drawCentredString((cols[5]+cols[6])/2.0, text_y, str(row['Quantity']))
         
+        # Empty column for writing date manually
+        # c.drawString((cols[6]+cols[7])/2.0, text_y, "") 
+        
         row_y_bot = text_y - 5; draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
         
     c.save(); buffer.seek(0); return buffer
@@ -488,13 +491,13 @@ def create_hexo_pdf(mat_name, mat_in, mat_out, balance_mm, df):
         
     c.save(); buffer.seek(0); return buffer
 
-def create_all_party_report_pdf(month_str, records_df):
+def create_all_party_report_pdf(title_str, records_df):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=landscape(A4))
     width, height = landscape(A4)
     
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(40, height - 40, f"Surgicraft Monthly Party Record ({month_str})")
+    c.drawString(40, height - 40, title_str)
     c.setFont("Helvetica", 10)
     c.drawString(40, height - 60, f"Report Generated: {datetime.now().strftime('%d-%m-%Y')}")
     
@@ -542,7 +545,7 @@ def create_all_party_report_pdf(month_str, records_df):
 
         row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
         
-    y -= 25; c.setFont("Helvetica-Bold", 12); c.drawString(40, y, f"TOTAL MONTHLY VALUE: Rs. {grand_total:,.2f}/-")
+    y -= 25; c.setFont("Helvetica-Bold", 12); c.drawString(40, y, f"TOTAL VALUE: Rs. {grand_total:,.2f}/-")
     c.save(); buffer.seek(0); return buffer
 
 # --- EMAIL FUNCTION ---
@@ -565,9 +568,10 @@ def send_monthly_report_email(month_str, pdf_buffers):
         
         Attached are the Surgicraft Industries monthly reports for {month_str}.
         
-        1. Factory Production & Cutting Report
-        2. Master Stock & Hexo Cutting Balance Report
-        3. All Parties (Machine & Parts) Sales Report
+        - Factory Production & Cutting Report
+        - Master Stock & Hexo Cutting Balance Report
+        - Machine Party Detail
+        - Parts Party Detail
         
         Regards,
         Surgicraft App
@@ -1117,9 +1121,8 @@ elif menu == "📧 Monthly Email Reports":
     display_header()
     st.write("### 📧 Auto-Generate & Email Monthly Reports")
     
-    st.info("Select a Month and Year to generate and email all 3 master reports (Factory, Stock, and Party Sales).")
+    st.info("Select a Month and Year to generate and email all master reports (Factory, Stock, and SEPARATE Party Sales).")
     
-    # 1. Month/Year Selector
     c1, c2 = st.columns(2)
     months = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
     current_month = datetime.now().strftime("%m")
@@ -1145,24 +1148,33 @@ elif menu == "📧 Monthly Email Reports":
                 if not f_df.empty:
                     pdf_attachments[f"Factory_Report_{display_month_str}.pdf"] = create_factory_pdf("-- All --", "-- All --", f_df, orientation="Aadu (Landscape)")
             
-            # Report 2: Hexo/Stock Data (Combining logic simply for the month)
+            # Report 2: Hexo/Stock Data
             h_df = hexo_df.copy()
             if not h_df.empty:
                 h_df = h_df[h_df['Date'].astype(str).str.endswith(target_str)]
                 if not h_df.empty:
-                     # Create a combined hexo PDF for simplicity in monthly report
-                     # We use the existing create_hexo_pdf but pass "All Materials" as a generic title
                      mat_in = pd.to_numeric(stock_df[stock_df['Date'].astype(str).str.endswith(target_str)]['Total Length (MM)'], errors='coerce').fillna(0).sum() if not stock_df.empty else 0
                      mat_out = pd.to_numeric(h_df['Total Used (MM)'], errors='coerce').fillna(0).sum()
                      pdf_attachments[f"Hexo_Cutting_Report_{display_month_str}.pdf"] = create_hexo_pdf("All Materials", mat_in, mat_out, mat_in - mat_out, h_df)
 
-            # Report 3: Main Party/Sales Data
+            # Report 3 & 4: Separate Machine and Parts Sales Data
             m_df = main_df.copy()
             if not m_df.empty:
                 m_df = m_df[m_df['Date'].astype(str).str.endswith(target_str)]
                 if not m_df.empty:
                     processed_m_df = prepare_display_df_with_history(m_df)
-                    pdf_attachments[f"Party_Sales_Report_{display_month_str}.pdf"] = create_all_party_report_pdf(display_month_str, processed_m_df)
+                    
+                    # Split into two tables logic
+                    machines_df = processed_m_df[processed_m_df['Speed'] != 'Spare Part']
+                    parts_df = processed_m_df[processed_m_df['Speed'] == 'Spare Part']
+                    
+                    if not machines_df.empty:
+                        title_machine = f"Surgicraft Monthly Machine Party Detail ({display_month_str})"
+                        pdf_attachments[f"Machine_Sales_Report_{display_month_str}.pdf"] = create_all_party_report_pdf(title_machine, machines_df)
+                        
+                    if not parts_df.empty:
+                        title_parts = f"Surgicraft Monthly Parts Party Detail ({display_month_str})"
+                        pdf_attachments[f"Spare_Parts_Sales_Report_{display_month_str}.pdf"] = create_all_party_report_pdf(title_parts, parts_df)
             
             if not pdf_attachments:
                 st.warning(f"No records found for {display_month_str}. Nothing to email.")
