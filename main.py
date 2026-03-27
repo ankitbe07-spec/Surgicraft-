@@ -11,6 +11,12 @@ import base64
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 
+# --- EMAIL MODULES ---
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
+
 # --- SET PAGE CONFIG ---
 page_icon_path = "logo.png" if os.path.exists("logo.png") else "🏥"
 st.set_page_config(page_title="Surgicraft Industries", page_icon=page_icon_path, layout="wide")
@@ -368,8 +374,7 @@ def create_part_search_pdf(party_name, part_name, df):
 
         c.setFont("Helvetica", 9)
         if str(row['Speed']) == "Spare Part":
-            part_str = f"Part: {format_size(str(row['Size']))}"
-            c.drawString(cols[3]+5, text_y, part_str)
+            c.drawString(cols[3]+5, text_y, f"Part: {format_size(str(row['Size']))}")
             y = text_y - 5
         else:
             c.drawString(cols[3]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
@@ -437,9 +442,6 @@ def create_factory_pdf(raw_material, search_part, df, orientation="Aadu (Landsca
         
         c.drawCentredString((cols[5]+cols[6])/2.0, text_y, str(row['Quantity']))
         
-        # Empty column for writing date manually
-        # c.drawString((cols[6]+cols[7])/2.0, text_y, "") 
-        
         row_y_bot = text_y - 5; draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
         
     c.save(); buffer.seek(0); return buffer
@@ -486,6 +488,107 @@ def create_hexo_pdf(mat_name, mat_in, mat_out, balance_mm, df):
         
     c.save(); buffer.seek(0); return buffer
 
+def create_all_party_report_pdf(month_str, records_df):
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=landscape(A4))
+    width, height = landscape(A4)
+    
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(40, height - 40, f"Surgicraft Monthly Party Record ({month_str})")
+    c.setFont("Helvetica", 10)
+    c.drawString(40, height - 60, f"Report Generated: {datetime.now().strftime('%d-%m-%Y')}")
+    
+    y = height - 90
+    cols = [40, 110, 260, 480, 560, 660, 780] 
+    
+    row_y_top = y + 20; row_y_bot = y - 5
+    c.setFont("Helvetica-Bold", 10)
+    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date")
+    c.drawString(cols[1]+5, y+2, "Party Name")
+    c.drawString(cols[2]+5, y+2, "Item Description / Details")
+    c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "HSN")
+    c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Type")
+    c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "Final Price")
+    draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
+    grand_total = 0
+
+    for index, row in records_df.iterrows():
+        total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
+        needed_height = 20 if str(row['Speed']) == "Spare Part" else 35
+            
+        if y - needed_height < 50:
+            c.showPage(); y = height - 50; c.setFont("Helvetica-Bold", 10)
+            row_y_top = y + 20; row_y_bot = y - 5
+            c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date"); c.drawString(cols[1]+5, y+2, "Party Name")
+            c.drawString(cols[2]+5, y+2, "Item Description / Details"); c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "HSN")
+            c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Type"); c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "Final Price")
+            draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
+
+        row_y_top = y; text_y = y - 15 
+        c.setFont("Helvetica", 9)
+        c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date']))
+        c.setFont("Helvetica-Bold", 9); c.drawString(cols[1]+5, text_y, str(row['Party'])[:25]); c.setFont("Helvetica", 9)
+        c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['HSN Code'])[:8])
+        c.drawCentredString((cols[4]+cols[5])/2.0, text_y, "Part" if str(row['Speed']) == "Spare Part" else "Machine")
+        c.setFont("Helvetica-Bold", 10); c.drawRightString(cols[6]-5, text_y, f"{total_price:,.2f}"); c.setFont("Helvetica", 9)
+        
+        if str(row['Speed']) == "Spare Part":
+            c.drawString(cols[2]+5, text_y, f"Part: {format_size(str(row['Size']))} (GST: {row['GST']})")
+            grand_total += total_price; y = text_y - 5
+        else:
+            c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))} | Speed: {row['Speed']}")
+            c.setFont("Helvetica-Oblique", 8); c.drawString(cols[2]+15, text_y-15, "Includes Custom Add-ons")
+            grand_total += total_price; y = text_y - 20
+
+        row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
+        
+    y -= 25; c.setFont("Helvetica-Bold", 12); c.drawString(40, y, f"TOTAL MONTHLY VALUE: Rs. {grand_total:,.2f}/-")
+    c.save(); buffer.seek(0); return buffer
+
+# --- EMAIL FUNCTION ---
+def send_monthly_report_email(month_str, pdf_buffers):
+    try:
+        if "email_user" not in st.secrets or "email_pass" not in st.secrets:
+            return False, "Email Credentials not found in Secrets!"
+            
+        sender = st.secrets["email_user"]
+        password = st.secrets["email_pass"]
+        receiver = "surgicraftindustries@gmail.com"
+
+        msg = MIMEMultipart()
+        msg['From'] = sender
+        msg['To'] = receiver
+        msg['Subject'] = f"Surgicraft Monthly Report - {month_str}"
+
+        body = f"""
+        Hello Ankit Bhai,
+        
+        Attached are the Surgicraft Industries monthly reports for {month_str}.
+        
+        1. Factory Production & Cutting Report
+        2. Master Stock & Hexo Cutting Balance Report
+        3. All Parties (Machine & Parts) Sales Report
+        
+        Regards,
+        Surgicraft App
+        """
+        msg.attach(MIMEText(body, 'plain'))
+
+        for filename, buf in pdf_buffers.items():
+            part = MIMEApplication(buf.getvalue(), Name=filename)
+            part['Content-Disposition'] = f'attachment; filename="{filename}"'
+            msg.attach(part)
+
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender, password)
+        server.send_message(msg)
+        server.quit()
+        return True, "Email sent successfully!"
+    except Exception as e:
+        return False, str(e)
+
+
 def display_header():
     col1, col2 = st.columns([1, 15])
     with col1:
@@ -502,7 +605,8 @@ menu = st.sidebar.radio("Go to:", [
     "✂️ Factory Parts & Cutting",
     "➕ Add New Entry", 
     "📜 Party History & Edit", 
-    "🔍 Part Price Finder", 
+    "🔍 Part Price Finder",
+    "📧 Monthly Email Reports", 
     "⚙️ Master Settings"
 ])
 
@@ -1005,8 +1109,73 @@ elif menu == "🔍 Part Price Finder":
             with c2: 
                 if st.button("👁️ View Preview", use_container_width=True): display_pdf_in_app(pdf_buffer)
 
+
 # ==========================================
-# 6. MASTER SETTINGS PAGE
+# NEW: 6. MONTHLY EMAIL REPORTS PAGE
+# ==========================================
+elif menu == "📧 Monthly Email Reports":
+    display_header()
+    st.write("### 📧 Auto-Generate & Email Monthly Reports")
+    
+    st.info("Select a Month and Year to generate and email all 3 master reports (Factory, Stock, and Party Sales).")
+    
+    # 1. Month/Year Selector
+    c1, c2 = st.columns(2)
+    months = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
+    current_month = datetime.now().strftime("%m")
+    current_year = datetime.now().year
+    years = [str(y) for y in range(current_year - 2, current_year + 3)]
+    
+    sel_month = c1.selectbox("Select Month:", months, index=months.index(current_month))
+    sel_year = c2.selectbox("Select Year:", years, index=years.index(str(current_year)))
+    target_str = f"-{sel_month}-{sel_year}" 
+    display_month_str = f"{datetime.strptime(sel_month, '%m').strftime('%B')} {sel_year}"
+    
+    st.write("---")
+    
+    if st.button("🚀 Generate & Send Email Now", type="primary"):
+        with st.spinner(f"Preparing reports for {display_month_str} and sending email... Please wait."):
+            
+            pdf_attachments = {}
+            
+            # Report 1: Factory Data
+            f_df = factory_df.copy()
+            if not f_df.empty:
+                f_df = f_df[f_df['Date'].astype(str).str.endswith(target_str)]
+                if not f_df.empty:
+                    pdf_attachments[f"Factory_Report_{display_month_str}.pdf"] = create_factory_pdf("-- All --", "-- All --", f_df, orientation="Aadu (Landscape)")
+            
+            # Report 2: Hexo/Stock Data (Combining logic simply for the month)
+            h_df = hexo_df.copy()
+            if not h_df.empty:
+                h_df = h_df[h_df['Date'].astype(str).str.endswith(target_str)]
+                if not h_df.empty:
+                     # Create a combined hexo PDF for simplicity in monthly report
+                     # We use the existing create_hexo_pdf but pass "All Materials" as a generic title
+                     mat_in = pd.to_numeric(stock_df[stock_df['Date'].astype(str).str.endswith(target_str)]['Total Length (MM)'], errors='coerce').fillna(0).sum() if not stock_df.empty else 0
+                     mat_out = pd.to_numeric(h_df['Total Used (MM)'], errors='coerce').fillna(0).sum()
+                     pdf_attachments[f"Hexo_Cutting_Report_{display_month_str}.pdf"] = create_hexo_pdf("All Materials", mat_in, mat_out, mat_in - mat_out, h_df)
+
+            # Report 3: Main Party/Sales Data
+            m_df = main_df.copy()
+            if not m_df.empty:
+                m_df = m_df[m_df['Date'].astype(str).str.endswith(target_str)]
+                if not m_df.empty:
+                    processed_m_df = prepare_display_df_with_history(m_df)
+                    pdf_attachments[f"Party_Sales_Report_{display_month_str}.pdf"] = create_all_party_report_pdf(display_month_str, processed_m_df)
+            
+            if not pdf_attachments:
+                st.warning(f"No records found for {display_month_str}. Nothing to email.")
+            else:
+                success, msg = send_monthly_report_email(display_month_str, pdf_attachments)
+                if success:
+                    st.success("✅ " + msg)
+                    st.balloons()
+                else:
+                    st.error("❌ Failed to send email: " + msg)
+
+# ==========================================
+# 7. MASTER SETTINGS PAGE
 # ==========================================
 elif menu == "⚙️ Master Settings":
     display_header()
