@@ -361,64 +361,54 @@ def create_part_search_pdf(party_name, part_name, df):
             
     c.save(); buffer.seek(0); return buffer
 
-def create_factory_pdf(raw_material, search_part, df, extra_blank_rows=0):
+def create_factory_pdf(raw_material, search_part, df):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
-    c.setFont("Helvetica-Bold", 14); c.drawString(40, 800, "Surgicraft Factory Production & Cutting List")
-    c.setFont("Helvetica", 10); c.drawString(40, 780, f"Material Filter: {raw_material}")
+    c.setFont("Helvetica-Bold", 14); c.drawString(30, 800, "Surgicraft Factory Production & Cutting List")
+    c.setFont("Helvetica", 10); c.drawString(30, 780, f"Material Filter: {raw_material}")
     c.drawString(220, 780, f"Part Filter: {search_part}"); c.drawString(420, 780, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
-    y = 740; c.setFont("Helvetica-Bold", 10)
-    cols = [40, 100, 220, 350, 420, 500, 550]
+    y = 740; c.setFont("Helvetica-Bold", 9)
+    # EXACT REQUIREMENT: 7 Columns with a totally empty 'Date' column at the end.
+    cols = [30, 85, 185, 310, 385, 450, 490, 565]
     row_y_top = y + 20; row_y_bot = y - 5
     
     c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date")
-    c.drawString(cols[1]+5, y+2, "Raw Material")
-    c.drawString(cols[2]+5, y+2, "Part Name")
-    c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Cutting Size")
+    c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Raw Material")
+    c.drawCentredString((cols[2]+cols[3])/2.0, y+2, "Part Name")
+    c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Cut Size")
     c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Final Size")
     c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "Qty")
+    c.drawCentredString((cols[6]+cols[7])/2.0, y+2, "Date") # KHali line nu header
     draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
     
     for index, row in df.iterrows():
         if y - 25 < 50:
-            c.showPage(); y = 800; c.setFont("Helvetica-Bold", 10)
+            c.showPage(); y = 800; c.setFont("Helvetica-Bold", 9)
             row_y_top = y+20; row_y_bot = y-5
-            c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date"); c.drawString(cols[1]+5, y+2, "Raw Material")
-            c.drawString(cols[2]+5, y+2, "Part Name"); c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Cutting Size")
+            c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date"); c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Raw Material")
+            c.drawCentredString((cols[2]+cols[3])/2.0, y+2, "Part Name"); c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Cut Size")
             c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Final Size"); c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "Qty")
+            c.drawCentredString((cols[6]+cols[7])/2.0, y+2, "Date")
             draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
             
         row_y_top = y; text_y = y - 15
-        c.setFont("Helvetica", 9)
+        c.setFont("Helvetica", 8)
         c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date'])[:10])
-        c.drawString(cols[1]+5, text_y, str(row['Raw Material'])[:22])
-        c.drawString(cols[2]+5, text_y, str(row['Part Name'])[:26])
-        c.setFont("Helvetica-Bold", 10); c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['Cutting Size']))
+        c.drawString(cols[1]+5, text_y, str(row['Raw Material'])[:18])
+        c.drawString(cols[2]+5, text_y, str(row['Part Name'])[:24])
+        c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['Cutting Size'])[:12])
         
-        final_sz = str(row.get('Final Size', '-'))
-        if final_sz == 'nan' or final_sz == '': final_sz = '-'
-        c.drawCentredString((cols[4]+cols[5])/2.0, text_y, final_sz)
+        final_sz = str(row.get('Final Size', ''))
+        if final_sz == 'nan' or final_sz == '' or final_sz == '-': final_sz = ''
+        c.drawCentredString((cols[4]+cols[5])/2.0, text_y, final_sz[:10])
         
-        c.setFont("Helvetica", 10); c.drawCentredString((cols[5]+cols[6])/2.0, text_y, str(row['Quantity']))
+        c.drawCentredString((cols[5]+cols[6])/2.0, text_y, str(row['Quantity']))
+        
+        # Chhelo dabbo (Date) Ekdam Khali (No dash)
+        # c.drawString((cols[6]+cols[7])/2.0, text_y, "")
         
         row_y_bot = text_y - 5; draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
-        
-    # --- ADD BLANK ROWS FOR MANUAL ENTRY ---
-    for _ in range(extra_blank_rows):
-        if y - 25 < 50:
-            c.showPage(); y = 800; c.setFont("Helvetica-Bold", 10)
-            row_y_top = y+20; row_y_bot = y-5
-            c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date"); c.drawString(cols[1]+5, y+2, "Raw Material")
-            c.drawString(cols[2]+5, y+2, "Part Name"); c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Cutting Size")
-            c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Final Size"); c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "Qty")
-            draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
-            
-        row_y_top = y
-        text_y = y - 15
-        row_y_bot = text_y - 5
-        draw_grid_lines(c, row_y_top, row_y_bot, cols)
-        y = row_y_bot
         
     c.save(); buffer.seek(0); return buffer
 
@@ -692,7 +682,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                                 sheet_stock.delete_rows(i+1); st.success("Deleted!"); clear_all_caches(); st.rerun(); break
 
 # ==========================================
-# 2. FACTORY PARTS & CUTTING MANAGER
+# 2. FACTORY PARTS & CUTTING MANAGER 
 # ==========================================
 elif menu == "✂️ Factory Parts & Cutting":
     display_header()
@@ -738,13 +728,11 @@ elif menu == "✂️ Factory Parts & Cutting":
             st.dataframe(f_df, use_container_width=True)
             st.success(f"**Total Quantity: {f_df['Quantity'].sum()}**")
             
-            extra_blanks = st.number_input("📝 PDF ma haathe thi lakhva ketli KHALI LINE (Blank Box) joiye che?", min_value=0, max_value=50, value=0, step=1)
-            
-            f_pdf = create_factory_pdf(search_raw, search_part, f_df, extra_blank_rows=extra_blanks)
+            f_pdf = create_factory_pdf(search_raw, search_part, f_df)
             c1, c2 = st.columns(2)
             with c1: st.download_button("📥 Download List", data=f_pdf, file_name="Factory_List.pdf", mime="application/pdf", use_container_width=True)
             with c2:
-                if st.button("👁️ View Preview", use_container_width=True): display_pdf_in_app(f_pdf)
+                if st.button("👁️ View", use_container_width=True): display_pdf_in_app(f_pdf)
             
     with tabC:
         if factory_df.empty: st.info("No records.")
