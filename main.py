@@ -9,7 +9,7 @@ import pandas as pd
 import io
 import base64
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 
 # --- SET PAGE CONFIG ---
 page_icon_path = "logo.png" if os.path.exists("logo.png") else "🏥"
@@ -233,7 +233,6 @@ def draw_grid_lines(c, y_top, y_bot, cols):
 
 def create_history_pdf(party, records_df, period_str="Lifetime"):
     buffer = io.BytesIO()
-    from reportlab.lib.pagesizes import landscape
     c = canvas.Canvas(buffer, pagesize=landscape(A4))
     width, height = landscape(A4)
     
@@ -305,7 +304,6 @@ def create_history_pdf(party, records_df, period_str="Lifetime"):
 
 def create_part_search_pdf(party_name, part_name, df):
     buffer = io.BytesIO()
-    from reportlab.lib.pagesizes import landscape
     c = canvas.Canvas(buffer, pagesize=landscape(A4))
     width, height = landscape(A4)
     
@@ -361,16 +359,28 @@ def create_part_search_pdf(party_name, part_name, df):
             
     c.save(); buffer.seek(0); return buffer
 
-def create_factory_pdf(raw_material, search_part, df):
+def create_factory_pdf(raw_material, search_part, df, orientation="Aadu (Landscape)"):
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    c.setFont("Helvetica-Bold", 14); c.drawString(30, 800, "Surgicraft Factory Production & Cutting List")
-    c.setFont("Helvetica", 10); c.drawString(30, 780, f"Material Filter: {raw_material}")
-    c.drawString(220, 780, f"Part Filter: {search_part}"); c.drawString(420, 780, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
-    y = 740; c.setFont("Helvetica-Bold", 9)
-    # EXACT REQUIREMENT: 7 Columns with a totally empty 'Date' column at the end.
-    cols = [30, 85, 185, 310, 385, 450, 490, 565]
+    if "Portrait" in orientation:
+        pagesize_selected = A4
+        cols = [30, 85, 185, 310, 385, 450, 490, 565] 
+    else:
+        pagesize_selected = landscape(A4)
+        cols = [40, 110, 270, 470, 560, 650, 710, 800] 
+        
+    width, height = pagesize_selected
+    c = canvas.Canvas(buffer, pagesize=pagesize_selected)
+    
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(cols[0], height - 40, "Surgicraft Factory Production & Cutting List")
+    c.setFont("Helvetica", 10)
+    c.drawString(cols[0], height - 60, f"Material Filter: {raw_material}")
+    c.drawString(cols[2], height - 60, f"Part Filter: {search_part}")
+    c.drawString(cols[4], height - 60, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
+    
+    y = height - 100
+    c.setFont("Helvetica-Bold", 9)
     row_y_top = y + 20; row_y_bot = y - 5
     
     c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date")
@@ -379,12 +389,12 @@ def create_factory_pdf(raw_material, search_part, df):
     c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Cut Size")
     c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Final Size")
     c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "Qty")
-    c.drawCentredString((cols[6]+cols[7])/2.0, y+2, "Date") # KHali line nu header
+    c.drawCentredString((cols[6]+cols[7])/2.0, y+2, "Date") # Empty Box header
     draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
     
     for index, row in df.iterrows():
         if y - 25 < 50:
-            c.showPage(); y = 800; c.setFont("Helvetica-Bold", 9)
+            c.showPage(); y = height - 50; c.setFont("Helvetica-Bold", 9)
             row_y_top = y+20; row_y_bot = y-5
             c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date"); c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Raw Material")
             c.drawCentredString((cols[2]+cols[3])/2.0, y+2, "Part Name"); c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Cut Size")
@@ -394,19 +404,17 @@ def create_factory_pdf(raw_material, search_part, df):
             
         row_y_top = y; text_y = y - 15
         c.setFont("Helvetica", 8)
+        
         c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date'])[:10])
-        c.drawString(cols[1]+5, text_y, str(row['Raw Material'])[:18])
-        c.drawString(cols[2]+5, text_y, str(row['Part Name'])[:24])
-        c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['Cutting Size'])[:12])
+        c.drawString(cols[1]+5, text_y, str(row['Raw Material']))
+        c.drawString(cols[2]+5, text_y, str(row['Part Name']))
+        c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['Cutting Size']))
         
         final_sz = str(row.get('Final Size', ''))
         if final_sz == 'nan' or final_sz == '' or final_sz == '-': final_sz = ''
-        c.drawCentredString((cols[4]+cols[5])/2.0, text_y, final_sz[:10])
+        c.drawCentredString((cols[4]+cols[5])/2.0, text_y, final_sz)
         
         c.drawCentredString((cols[5]+cols[6])/2.0, text_y, str(row['Quantity']))
-        
-        # Chhelo dabbo (Date) Ekdam Khali (No dash)
-        # c.drawString((cols[6]+cols[7])/2.0, text_y, "")
         
         row_y_bot = text_y - 5; draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
         
@@ -690,8 +698,9 @@ elif menu == "✂️ Factory Parts & Cutting":
     tabA, tabB, tabC = st.tabs(["➕ Add Record", "🔍 Search & Report", "✏️ Edit / Delete"])
     
     with tabA:
-        c01, c02 = st.columns(2)
-        rec_date = c01.date_input("Manual Date Select Karo (Auto today):", datetime.today())
+        st.write("📝 **Record Details:**")
+        c01, c02, c03 = st.columns([1, 1, 1])
+        rec_date = c01.date_input("Date Select Karo:", datetime.today())
         
         c1, c2 = st.columns(2)
         raw_sel = c1.selectbox("1. Raw Material (Optional)", ["-- Khali Rakho (Empty) --", "-- New Material --"] + unique_materials)
@@ -717,22 +726,36 @@ elif menu == "✂️ Factory Parts & Cutting":
                 st.toast("Saved! ✅"); clear_all_caches(); st.rerun()
                 
     with tabB:
+        st.write("🔍 **Smart Search & Filters:**")
+        
+        # --- NEW SMART SEARCH BOX ---
+        search_kw_factory = st.text_input("Type here to Search (e.g. 20, MS, Stand):", "")
+        
         sc1, sc2 = st.columns(2)
-        search_raw = sc1.selectbox("1. Material:", ["-- All Materials --"] + unique_materials)
-        search_part = sc2.selectbox("2. Part:", ["-- All Parts --"] + unique_factory_parts)
+        search_raw = sc1.selectbox("Filter by Material (Optional):", ["-- All Materials --"] + unique_materials)
+        search_part = sc2.selectbox("Filter by Part (Optional):", ["-- All Parts --"] + unique_factory_parts)
         
         f_df = factory_df.copy()
         if not f_df.empty:
             if search_raw != "-- All Materials --": f_df = f_df[f_df['Raw Material'].astype(str).str.strip() == search_raw]
             if search_part != "-- All Parts --": f_df = f_df[f_df['Part Name'].astype(str).str.strip() == search_part]
+            
+            # --- SMART TEXT FILTER LOGIC ---
+            if search_kw_factory:
+                mask = f_df[['Raw Material', 'Part Name', 'Cutting Size']].astype(str).apply(lambda x: x.str.contains(search_kw_factory, case=False, na=False)).any(axis=1)
+                f_df = f_df[mask]
+                
             st.dataframe(f_df, use_container_width=True)
             st.success(f"**Total Quantity: {f_df['Quantity'].sum()}**")
             
-            f_pdf = create_factory_pdf(search_raw, search_part, f_df)
+            st.write("---")
+            pdf_format = st.radio("📄 PDF Design Format Select Karo:", ["Aadu (Landscape) - Best for Long Names", "Ubhu (Portrait)"], horizontal=True)
+            
+            f_pdf = create_factory_pdf(search_raw, search_part, f_df, orientation=pdf_format)
             c1, c2 = st.columns(2)
-            with c1: st.download_button("📥 Download List", data=f_pdf, file_name="Factory_List.pdf", mime="application/pdf", use_container_width=True)
+            with c1: st.download_button("📥 Download List PDF", data=f_pdf, file_name="Factory_List.pdf", mime="application/pdf", use_container_width=True)
             with c2:
-                if st.button("👁️ View", use_container_width=True): display_pdf_in_app(f_pdf)
+                if st.button("👁️ View Preview", use_container_width=True): display_pdf_in_app(f_pdf)
             
     with tabC:
         if factory_df.empty: st.info("No records.")
@@ -926,17 +949,27 @@ elif menu == "🔍 Part Price Finder":
     if main_df.empty: st.info("No records.")
     else:
         df = main_df.copy(); df['Clean_Party'] = df['Party'].astype(str).str.strip().str.title()
+        
+        # --- NEW SMART SEARCH BOX ---
+        search_kw_price = st.text_input("🔍 Smart Keyword Search (Type Part Name, Size, Machine e.g., 'Valve', '16x24'):", "")
+        
         c1, c2 = st.columns(2)
-        search_party_name = c1.selectbox("1. Party:", ["-- All Parties --"] + unique_parties_list)
+        search_party_name = c1.selectbox("Filter by Party (Optional):", ["-- All Parties --"] + unique_parties_list)
         party_parts = sorted(df[df['Clean_Party'] == search_party_name]['Size'].astype(str).str.strip().unique().tolist()) if search_party_name != "-- All Parties --" else all_items_list
-        search_part_name = c2.selectbox("2. Part:", ["-- All Items --"] + party_parts)
+        search_part_name = c2.selectbox("Filter by Item (Optional):", ["-- All Items --"] + party_parts)
         
         filtered_df = df.copy()
         if search_party_name != "-- All Parties --": filtered_df = filtered_df[filtered_df['Clean_Party'] == search_party_name]
         if search_part_name != "-- All Items --": filtered_df = filtered_df[filtered_df['Size'].astype(str).str.strip() == search_part_name]
+        
+        # --- SMART TEXT FILTER LOGIC ---
+        if search_kw_price:
+            mask = filtered_df[['Size', 'Speed', 'Party']].astype(str).apply(lambda x: x.str.contains(search_kw_price, case=False, na=False)).any(axis=1)
+            filtered_df = filtered_df[mask]
             
         if filtered_df.empty: st.warning("No entries found.")
-        elif search_party_name == "-- All Parties --" and search_part_name == "-- All Items --": st.info("Select to search.")
+        elif search_party_name == "-- All Parties --" and search_part_name == "-- All Items --" and not search_kw_price: 
+            st.info("Select filters or type a keyword to search.")
         else:
             processed_df = prepare_display_df_with_history(filtered_df)
             display_df = processed_df[['Date', 'Old Date', 'Party', 'Size', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']].copy()
