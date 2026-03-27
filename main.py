@@ -348,7 +348,6 @@ def create_part_search_pdf(party_name, part_name, df):
 
         c.setFont("Helvetica", 9)
         if str(row['Speed']) == "Spare Part":
-            # FIXED BUG HERE - NO SLICING [:40] TO PREVENT TYPEERROR AND ALLOW FULL NAME
             c.drawString(cols[3]+5, text_y, f"Part: {format_size(str(row['Size']))}")
             y = text_y - 5
         else:
@@ -416,9 +415,6 @@ def create_factory_pdf(raw_material, search_part, df, orientation="Aadu (Landsca
         c.drawCentredString((cols[4]+cols[5])/2.0, text_y, final_sz)
         
         c.drawCentredString((cols[5]+cols[6])/2.0, text_y, str(row['Quantity']))
-        
-        # Empty column for writing date manually
-        # c.drawString((cols[6]+cols[7])/2.0, text_y, "") 
         
         row_y_bot = text_y - 5; draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
         
@@ -495,8 +491,8 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
     alert_list = []
     if not stock_df.empty:
         for mat in stock_materials_full:
-            m_in = stock_df[stock_df['Material Name'] == mat]['Total Length (MM)'].sum()
-            m_out = hexo_df[hexo_df['Material Name'] == mat]['Total Used (MM)'].sum() if not hexo_df.empty else 0
+            m_in = pd.to_numeric(stock_df[stock_df['Material Name'] == mat]['Total Length (MM)'], errors='coerce').fillna(0).sum()
+            m_out = pd.to_numeric(hexo_df[hexo_df['Material Name'] == mat]['Total Used (MM)'], errors='coerce').fillna(0).sum() if not hexo_df.empty else 0
             if (m_in - m_out) < 1524: alert_list.append(mat)
     if alert_list: st.error(f"🚨 **ALERT!** Nichena maal no stock 5 Foot thi occho che: **{', '.join(alert_list)}**")
 
@@ -529,8 +525,8 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                 size_in_mm = convert_to_mm(size_val, cut_unit)
                 total_used_mm = (size_in_mm + blade_margin) * cut_qty
                 
-                current_in = stock_df[stock_df['Material Name'] == cut_mat]['Total Length (MM)'].sum() if not stock_df.empty else 0
-                current_out = hexo_df[hexo_df['Material Name'] == cut_mat]['Total Used (MM)'].sum() if not hexo_df.empty else 0
+                current_in = pd.to_numeric(stock_df[stock_df['Material Name'] == cut_mat]['Total Length (MM)'], errors='coerce').fillna(0).sum() if not stock_df.empty else 0
+                current_out = pd.to_numeric(hexo_df[hexo_df['Material Name'] == cut_mat]['Total Used (MM)'], errors='coerce').fillna(0).sum() if not hexo_df.empty else 0
                 current_balance = current_in - current_out
                 new_balance = current_balance - total_used_mm
                 
@@ -580,9 +576,9 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
             if not filtered_mats: st.warning("Aa naam no koi maal malyo nathi.")
             
             for mat in filtered_mats:
-                mat_in = stock_df[stock_df['Material Name'] == mat]['Total Length (MM)'].sum()
+                mat_in = pd.to_numeric(stock_df[stock_df['Material Name'] == mat]['Total Length (MM)'], errors='coerce').fillna(0).sum()
                 mat_hexo_df = hexo_df[hexo_df['Material Name'] == mat] if not hexo_df.empty else pd.DataFrame()
-                mat_out = mat_hexo_df['Total Used (MM)'].sum() if not mat_hexo_df.empty else 0
+                mat_out = pd.to_numeric(mat_hexo_df['Total Used (MM)'], errors='coerce').fillna(0).sum() if not mat_hexo_df.empty else 0
                 balance_mm = mat_in - mat_out
                 
                 with st.expander(f"📦 {mat} | Balance: {mm_to_foot_inch(balance_mm)}", expanded=(len(filtered_mats)==1)):
@@ -747,7 +743,10 @@ elif menu == "✂️ Factory Parts & Cutting":
                 f_df = f_df[mask]
                 
             st.dataframe(f_df, use_container_width=True)
-            st.success(f"**Total Quantity: {f_df['Quantity'].sum()}**")
+            
+            # --- SAFE SUM AVOIDING TYPE-ERROR ---
+            safe_qty = pd.to_numeric(f_df['Quantity'], errors='coerce').fillna(0).sum()
+            st.success(f"**Total Quantity: {int(safe_qty)}**")
             
             st.write("---")
             pdf_format = st.radio("📄 PDF Design Format Select Karo:", ["Aadu (Landscape) - Best for Long Names", "Ubhu (Portrait)"], horizontal=True)
