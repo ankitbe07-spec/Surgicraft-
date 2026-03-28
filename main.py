@@ -334,10 +334,11 @@ def create_history_pdf(party, records_df):
             c.drawString(cols[2]+5, text_y, part_str)
             y = text_y - 5
         else:
+            size_formatted = format_size(str(row['Size']))
             if speed_str not in ["-", "", "nan", "-- None --", "None"]:
-                c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))} | Speed: {speed_str}")
+                c.drawString(cols[2]+5, text_y, f"Machine: {size_formatted} {speed_str} Speed")
             else:
-                c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
+                c.drawString(cols[2]+5, text_y, f"Machine: {size_formatted}")
             
             temp_y = text_y - 15
             c.setFont("Helvetica-Oblique", 8)
@@ -375,7 +376,7 @@ def create_part_search_pdf(party_name, part_name, df):
     for index, row in df.iterrows():
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
         speed_str = str(row['Speed'])
-        needed_height = 20 if speed_str == "Spare Part" else 35
+        needed_height = 20 if speed_str == "Spare Part" else 25
         
         if y - needed_height < 50:
             c.showPage(); y = height-50; c.setFont("Helvetica-Bold", 10)
@@ -407,10 +408,12 @@ def create_part_search_pdf(party_name, part_name, df):
             c.drawString(cols[3]+5, text_y, f"Part: {format_size(str(row['Size']))}")
             y = text_y - 5
         else:
-            c.drawString(cols[3]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
+            size_formatted = format_size(str(row['Size']))
             if speed_str not in ["-", "", "nan", "-- None --", "None"]:
-                c.setFont("Helvetica-Oblique", 8); c.drawString(cols[3]+15, text_y-15, f"• Speed: {speed_str}")
-            y = text_y - 20
+                c.drawString(cols[3]+5, text_y, f"Machine: {size_formatted} {speed_str} Speed")
+            else:
+                c.drawString(cols[3]+5, text_y, f"Machine: {size_formatted}")
+            y = text_y - 15
             
         row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
             
@@ -566,9 +569,13 @@ def create_all_party_report_pdf(title_str, records_df):
             c.drawString(cols[2]+5, text_y, f"Part: {format_size(str(row['Size']))} (GST: {row['GST']})")
             y = text_y - 5
         else:
-            c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
+            size_formatted = format_size(str(row['Size']))
             if speed_str not in ["-", "", "nan", "-- None --", "None"]:
-                c.setFont("Helvetica-Oblique", 8); c.drawString(cols[2]+15, text_y-15, f"• Speed: {speed_str}")
+                c.drawString(cols[2]+5, text_y, f"Machine: {size_formatted} {speed_str} Speed")
+            else:
+                c.drawString(cols[2]+5, text_y, f"Machine: {size_formatted}")
+                
+            c.setFont("Helvetica-Oblique", 8); c.drawString(cols[2]+15, text_y-15, "Includes Custom Add-ons")
             y = text_y - 20
 
         row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
@@ -971,7 +978,7 @@ elif menu == "➕ Add New Entry":
             lengths = sorted(list(set([k.split('x')[1] for k in settings['prices'].keys() if 'x' in k])))
             l_val = st.selectbox("Length", lengths if lengths else ["0"], key="add_l")
         
-        # --- NEW OPTIONAL SPEED DROPDOWN ---
+        # --- OPTIONAL SPEED DROPDOWN ---
         with col3: speed = st.selectbox("Speed", ["-- None --", "Low", "High", "Low+High"], key="add_speed")
         
         with col4:
@@ -999,8 +1006,12 @@ elif menu == "➕ Add New Entry":
         base_machine_price = int(settings['prices'].get(size, 0))
         if base_machine_price == 0: st.error(f"Base price not found for size {size}.")
         else:
-            final_total_price = base_machine_price + sum([v for k,v in addons_prices_struct.items() if k != "HSN"])
-            st.success(f"**Final Machine Price: Rs. {final_total_price:,.2f}/-**")
+            # --- NEW MANUAL PRICE INPUT ---
+            calculated_total_price = base_machine_price + sum([v for k,v in addons_prices_struct.items() if k != "HSN"])
+            st.info(f"💡 અંદાજિત ગણતરી (Idea માટે): Rs. {calculated_total_price:,.2f}/-")
+            
+            final_total_price = st.number_input("Final Machine Price (કાગળમાંથી જોઈને જાતે લખો):", value=calculated_total_price, step=100, key="btn_add_manual_price")
+            
             if st.button("➕ SAVE ENTRY", type="primary", key="btn_add_entry"):
                 if not party_name: st.warning("Please enter Party Name!")
                 else:
@@ -1076,7 +1087,6 @@ elif menu == "📜 Party History & Edit":
                     row_data = processed_items[processed_items['Display'] == selected_display].iloc[0]
                     is_spare = (str(row_data['Speed']) == 'Spare Part')
                     
-                    # --- FIX: DYNAMIC REFRESH USING HASHED KEY ---
                     k_suf = str(hash(selected_display)).replace("-", "")
                     
                     st.write("---")
@@ -1277,6 +1287,7 @@ elif menu == "🔍 Part Price Finder":
             with c1: st.download_button("📥 Download PDF", data=pdf_buffer, file_name="Search_Result.pdf", mime="application/pdf", use_container_width=True, key="dl_pf_pdf")
             with c2: 
                 if st.button("👁️ View Preview", use_container_width=True, key="pv_pf_pdf"): display_pdf_in_app(pdf_buffer)
+
 
 # ==========================================
 # 6. MONTHLY EMAIL REPORTS PAGE
