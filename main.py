@@ -10,8 +10,6 @@ import io
 import base64
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
-
-# --- EMAIL MODULES ---
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -21,7 +19,6 @@ from email.mime.application import MIMEApplication
 page_icon_path = "logo.png" if os.path.exists("logo.png") else "🏥"
 st.set_page_config(page_title="Surgicraft Industries", page_icon=page_icon_path, layout="wide")
 
-# --- PWA / APPLE iOS LOGO FIX ---
 st.markdown("""
     <link rel="apple-touch-icon" href="logo.png">
     <link rel="icon" type="image/png" href="logo.png">
@@ -31,8 +28,6 @@ st.markdown("""
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 """, unsafe_allow_html=True)
 
-# --- SETTINGS MANAGER ---
-SETTINGS_FILE = "surgicraft_settings.json"
 DEF_SETTINGS = {
     "password": "1234",
     "prices": {
@@ -42,31 +37,16 @@ DEF_SETTINGS = {
     },
     "addons": {
         "VacuumPump": 35000, "Only Provision V.Pump Bush": 18000,
-        "DoubleDoor": 30000, "Alarm": 4000, "Gauge": 5000,
-        "LowHighExtra": 12000
+        "DoubleDoor": 30000, "Alarm": 4000, "Gauge": 5000
     },
+    "lh_label": "Low+High Speed Extra",
     "gst_rates": [5, 12, 18, 28],
     "hsn_codes": []
 }
 
-def load_settings():
-    if os.path.exists(SETTINGS_FILE):
-        with open(SETTINGS_FILE, "r") as f:
-            data = json.load(f)
-            if "gst_rates" not in data: data["gst_rates"] = [5, 12, 18, 28]
-            if "hsn_codes" not in data: data["hsn_codes"] = []
-            return data
-    return DEF_SETTINGS
-
-def save_settings(data):
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(data, f)
-
-settings = load_settings()
-
 if 'q_no' not in st.session_state: st.session_state.q_no = f"SUR/{datetime.now().year}/{datetime.now().strftime('%m%d%H%M')}"
 
-# --- GOOGLE SHEETS CONNECTION ---
+# --- GOOGLE SHEETS CONNECTION (Now saves Settings here too!) ---
 @st.cache_resource
 def get_sheets():
     info = json.loads(st.secrets["google_key"])
@@ -93,40 +73,60 @@ def get_sheets():
         sheet_hexo = db.add_worksheet(title="Hexo_Cutting", rows="1000", cols="10")
         sheet_hexo.append_row(["Date", "Material Name", "Cut Size", "Quantity", "Blade Margin (MM)", "Total Used (MM)"])
         
-    return sheet_main, sheet_factory, sheet_stock, sheet_hexo
+    try: sheet_settings = db.worksheet("App_Settings")
+    except:
+        sheet_settings = db.add_worksheet(title="App_Settings", rows="10", cols="2")
+        sheet_settings.update_acell("B1", json.dumps(DEF_SETTINGS))
+        
+    return sheet_main, sheet_factory, sheet_stock, sheet_hexo, sheet_settings
 
 # --- SMART CACHE ---
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=120)
 def fetch_all_data():
-    sheet_m, sheet_f, sheet_s, sheet_h = get_sheets()
-    m_rec = sheet_m.get_all_records()
-    f_rec = sheet_f.get_all_records()
-    s_rec = sheet_s.get_all_records()
-    h_rec = sheet_h.get_all_records()
+    sheet_m, sheet_f, sheet_s, sheet_h, sheet_set = get_sheets()
     return (
-        pd.DataFrame(m_rec) if m_rec else pd.DataFrame(),
-        pd.DataFrame(f_rec) if f_rec else pd.DataFrame(),
-        pd.DataFrame(s_rec) if s_rec else pd.DataFrame(),
-        pd.DataFrame(h_rec) if h_rec else pd.DataFrame()
+        pd.DataFrame(sheet_m.get_all_records()) if sheet_m.get_all_records() else pd.DataFrame(),
+        pd.DataFrame(sheet_f.get_all_records()) if sheet_f.get_all_records() else pd.DataFrame(),
+        pd.DataFrame(sheet_s.get_all_records()) if sheet_s.get_all_records() else pd.DataFrame(),
+        pd.DataFrame(sheet_h.get_all_records()) if sheet_h.get_all_records() else pd.DataFrame()
     )
+
+def load_settings_from_sheet():
+    try:
+        _, _, _, _, sheet_set = get_sheets()
+        val = sheet_set.acell("B1").value
+        if val:
+            data = json.loads(val)
+            if "gst_rates" not in data: data["gst_rates"] = [5, 12, 18, 28]
+            if "hsn_codes" not in data: data["hsn_codes"] = []
+            if "lh_label" not in data: data["lh_label"] = "Low+High Speed Extra"
+            return data
+    except: pass
+    return DEF_SETTINGS
+
+def save_settings_to_sheet(data):
+    try:
+        _, _, _, _, sheet_set = get_sheets()
+        sheet_set.update_acell("B1", json.dumps(data))
+    except Exception as e: st.error(f"Error saving settings: {e}")
 
 def clear_all_caches():
     st.cache_data.clear()
     st.cache_resource.clear()
 
+settings = load_settings_from_sheet()
+
 try:
-    sheet_main, sheet_factory, sheet_stock, sheet_hexo = get_sheets()
+    sheet_main, sheet_factory, sheet_stock, sheet_hexo, sheet_set = get_sheets()
     main_df, factory_df, stock_df, hexo_df = fetch_all_data()
     
     unique_parties_list = sorted(main_df['Party'].astype(str).str.strip().str.title().unique().tolist()) if not main_df.empty else []
     unique_parts_list = sorted(main_df[main_df['Speed'] == 'Spare Part']['Size'].astype(str).str.strip().unique().tolist()) if not main_df.empty else []
     all_items_list = sorted(main_df['Size'].astype(str).str.strip().unique().tolist()) if not main_df.empty else []
-    
     unique_materials = sorted(factory_df['Raw Material'].astype(str).str.strip().unique().tolist()) if not factory_df.empty else []
     unique_materials = [x for x in unique_materials if x and x != 'nan']
     unique_factory_parts = sorted(factory_df['Part Name'].astype(str).str.strip().unique().tolist()) if not factory_df.empty else []
     unique_factory_parts = [x for x in unique_factory_parts if x and x != 'nan']
-    
     stock_materials_full = sorted(stock_df['Material Name'].astype(str).str.strip().unique().tolist()) if not stock_df.empty else []
 except Exception as e:
     st.error(f"Google Sheet Connection Error: {e}")
@@ -145,21 +145,11 @@ def safe_float(val, fallback=0.0):
         return float(val)
     except: return fallback
 
-def safe_date(val_str):
-    parsed = pd.to_datetime(val_str, format="%d-%m-%Y", errors='coerce')
-    if pd.isna(parsed): return datetime.today()
-    return parsed
-
-# --- HELPER FORMAT FUNCTIONS ---
 def format_size(size_str):
     if "x" in size_str:
         parts = size_str.split('x')
         if len(parts) == 2 and parts[0].strip().isdigit(): return f'{parts[0].strip()}" x {parts[1].strip()}"'
     return size_str
-
-def format_size_for_ui(size_str):
-    if size_str in ["-- All Items --", "-- New Part --"]: return size_str
-    return format_size(str(size_str))
 
 def get_spare_details(row_options, total_price):
     basic, gst, hsn = 0, 0, "-"
@@ -232,7 +222,7 @@ def make_full_display_name(r):
         base += f" {r['Speed']} Speed"
         try:
             opts = json.loads(str(r.get('Options', '{}')))
-            addons = [k for k in opts.keys() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice']]
+            addons = [k for k in opts.keys() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra')]]
             if addons: base += " + " + " + ".join(addons)
         except: pass
     else:
@@ -252,8 +242,7 @@ def parse_smart_size(val_str):
             return float(val_str.split('/')[0]) / float(val_str.split('/')[1])
         else:
             return float(val_str)
-    except:
-        return -1.0
+    except: return -1.0
 
 def convert_to_mm(val, unit):
     if unit == "Foot": return val * 304.8
@@ -266,7 +255,6 @@ def mm_to_foot_inch(mm_val):
     inches = total_inches % 12
     return f"{feet} Foot {inches:.1f} Inch"
 
-# --- PDF GENERATORS ---
 def display_pdf_in_app(pdf_buffer):
     base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
     pdf_display = f'''<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="450" type="application/pdf" style="border: 2px solid #ccc; border-radius: 8px;"></iframe>'''
@@ -284,7 +272,6 @@ def create_history_pdf(party, records_df):
     c = canvas.Canvas(buffer, pagesize=landscape(A4))
     width, height = landscape(A4)
     
-    # NEW PDF HEADING
     c.setFont("Helvetica-Bold", 14)
     c.drawString(40, height - 40, "Surgicraft Industries HHP Machine Price List")
     c.setFont("Helvetica-Bold", 11)
@@ -311,7 +298,7 @@ def create_history_pdf(party, records_df):
             needed_height = 30
             try: 
                 opts = json.loads(row.get('Options', '{}'))
-                addons = [k for k in opts.keys() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice']]
+                addons = [k for k in opts.keys() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra')]]
                 needed_height += len(addons) * 15
             except: pass
             
@@ -326,14 +313,14 @@ def create_history_pdf(party, records_df):
         row_y_top = y; text_y = y - 15 
         
         c.setFont("Helvetica-Bold", 9)
-        dt_val = str(row['Date']) if str(row['Date']) != "-" else ""
+        dt_val = str(row['Date']) if str(row['Date']) not in ["-", "nan", ""] else ""
         c.drawCentredString((cols[0]+cols[1])/2.0, text_y, dt_val)
-        odt_val = str(row['Old Date']) if str(row['Old Date']) != "-" else ""
+        odt_val = str(row['Old Date']) if str(row['Old Date']) not in ["-", "nan", ""] else ""
         c.drawCentredString((cols[1]+cols[2])/2.0, text_y, odt_val)
         c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['HSN Code'])[:8])
         
         old_price_str = f"{row['Old Price']:,.2f}" if str(row['Old Price']).replace('.','').isdigit() else str(row['Old Price'])
-        if old_price_str == "-": old_price_str = ""
+        if old_price_str == "-" or old_price_str == "nan": old_price_str = ""
         c.drawRightString(cols[5]-5, text_y, old_price_str)
         c.drawRightString(cols[6]-5, text_y, f"{total_price:,.2f}")
         
@@ -349,7 +336,7 @@ def create_history_pdf(party, records_df):
             try: 
                 addons_dict = json.loads(row.get('Options', '{}'))
                 for name, price in addons_dict.items():
-                    if name not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice']:
+                    if name not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra')]:
                         c.drawString(cols[2]+15, temp_y, f"• Add-on: {name}"); temp_y -= 15
             except: pass
             y = temp_y + 5
@@ -393,16 +380,16 @@ def create_part_search_pdf(party_name, part_name, df):
         row_y_top = y; text_y = y - 15
         
         c.setFont("Helvetica-Bold", 9)
-        dt_val = str(row['Date']) if str(row['Date']) != "-" else ""
+        dt_val = str(row['Date']) if str(row['Date']) not in ["-", "nan", ""] else ""
         c.drawCentredString((cols[0]+cols[1])/2.0, text_y, dt_val)
-        odt_val = str(row['Old Date']) if str(row['Old Date']) != "-" else ""
+        odt_val = str(row['Old Date']) if str(row['Old Date']) not in ["-", "nan", ""] else ""
         c.drawCentredString((cols[1]+cols[2])/2.0, text_y, odt_val)
         
         c.drawString(cols[2]+5, text_y, str(row['Party'])[:22])
         c.drawCentredString((cols[4]+cols[5])/2.0, text_y, str(row['HSN Code'])[:8])
         
         old_price_str = f"{row['Old Price']:,.2f}" if str(row['Old Price']).replace('.','').isdigit() else str(row['Old Price'])
-        if old_price_str == "-": old_price_str = ""
+        if old_price_str == "-" or old_price_str == "nan": old_price_str = ""
         c.drawRightString(cols[6]-5, text_y, old_price_str)
         c.drawRightString(cols[7]-5, text_y, f"{total_price:,.2f}")
 
@@ -427,7 +414,7 @@ def create_factory_pdf(raw_material, search_part, df, orientation="Aadu (Landsca
         cols = [30, 85, 185, 310, 385, 450, 490, 565] 
     else:
         pagesize_selected = landscape(A4)
-        cols = [40, 110, 290, 450, 560, 680, 730, 800] # Adjusted to prevent overlap
+        cols = [40, 110, 290, 450, 560, 680, 740, 800] 
         
     width, height = pagesize_selected
     c = canvas.Canvas(buffer, pagesize=pagesize_selected)
@@ -978,11 +965,12 @@ elif menu == "➕ Add New Entry":
         cols = st.columns(3)
         selected_addons, addons_prices_struct, col_idx = [], {}, 0
         
-        if speed == "Low+High": addons_prices_struct["Low+High Speed Extra"] = settings['addons'].get("LowHighExtra", 0)
+        lh_label = settings.get('lh_label', 'Low+High Speed Extra')
+        if speed == "Low+High": addons_prices_struct[lh_label] = settings['addons'].get(lh_label, 0)
         addons_prices_struct["HSN"] = hsn_val_m
             
         for addon_name in settings['addons']:
-            if addon_name in ["LowHighExtra"]: continue
+            if addon_name == lh_label: continue
             if cols[col_idx % 3].checkbox(addon_name, key=f"chk_{addon_name}"):
                 selected_addons.append(addon_name)
                 addons_prices_struct[addon_name] = settings['addons'].get(addon_name, 0)
@@ -1074,8 +1062,8 @@ elif menu == "📜 Party History & Edit":
                     
                     st.write("**Edit Dates & Prices (Leave blank to keep Empty):**")
                     d1, d2 = st.columns(2)
-                    n_new_date = d1.text_input("Edit New Date:", value=str(row_data['Date']) if str(row_data['Date']) != "-" else "", key="edit_ndate")
-                    n_old_date = d2.text_input("Edit Old Date:", value=str(row_data.get('Old Date', '')) if str(row_data.get('Old Date', '')) != "-" else "", key="edit_odate")
+                    n_new_date = d1.text_input("Edit New Date:", value=str(row_data['Date']) if str(row_data['Date']) not in ["-", "nan", ""] else "", key="edit_ndate")
+                    n_old_date = d2.text_input("Edit Old Date:", value=str(row_data.get('Old Date', '')) if str(row_data.get('Old Date', '')) not in ["-", "nan", ""] else "", key="edit_odate")
                     
                     d3, d4 = st.columns(2)
                     n_old_price = d3.text_input("Edit Old Price:", value=str(row_data.get('Old Price', '')).replace('-',''), key="edit_oprice")
@@ -1153,7 +1141,6 @@ elif menu == "📜 Party History & Edit":
                         if i > 0 and r[1].strip().title() == del_party and str(r[2]).strip() == str(del_row_data['Date']).strip() and str(r[3]).strip() == str(del_row_data['Size']).strip():
                             sheet_main.delete_rows(i + 1); st.success("Deleted!"); clear_all_caches(); st.rerun(); break
                             
-        # --- TAB 4: FIX FOR MULTISELECT TRUNCATION (USING CHECKBOXES) ---
         with tab4:
             st.write("### 📋 Copy Entire Party List & Apply % Price Change")
             clone_from = st.selectbox("1. Select Party to Copy From:", ["-- Select --"] + unique_parties_list, key="clone_from")
@@ -1163,12 +1150,11 @@ elif menu == "📜 Party History & Edit":
                 processed_party = prepare_display_df_with_history(party_data)
                 processed_party['Display'] = processed_party.apply(make_full_display_name, axis=1)
                 
-                st.write("**2. Select Items/Machines to Clone (Uncheck the ones you don't want):**")
+                st.write("**2. Select Items to Clone (Uncheck the ones you don't want):**")
                 item_displays = processed_party['Display'].tolist()
                 
                 selected_clone_items = []
                 for i, disp in enumerate(item_displays):
-                    # Checkbox for each item so full text is visible and wraps nicely
                     if st.checkbox(disp, value=True, key=f"clone_chk_{clone_from}_{i}"):
                         selected_clone_items.append(disp)
                 
@@ -1185,6 +1171,7 @@ elif menu == "📜 Party History & Edit":
                     else:
                         new_rows = []
                         dt_str = datetime.now().strftime("%d-%m-%Y")
+                        lh_label = settings.get('lh_label', 'Low+High Speed Extra')
                         
                         for disp in selected_clone_items:
                             r_d = processed_party[processed_party['Display'] == disp].iloc[0]
@@ -1203,7 +1190,7 @@ elif menu == "📜 Party History & Edit":
                                 try:
                                     opts_dict = json.loads(new_options)
                                     for k, v in opts_dict.items():
-                                        if k not in ['HSN', 'ManualOldDate', 'ManualOldPrice']:
+                                        if k not in ['HSN', 'ManualOldDate', 'ManualOldPrice', lh_label]:
                                             opts_dict[k] = int(v * (1 + (pct_change / 100.0)))
                                     opts_dict['ManualOldDate'] = "-"
                                     opts_dict['ManualOldPrice'] = "-"
@@ -1358,7 +1345,7 @@ elif menu == "⚙️ Master Settings":
             cA, cB, cC = st.columns([2, 2, 1])
             cA.write(f"**{format_size(size)}**")
             prices[size] = cB.number_input("Price", value=price, step=1000, key=f"p_{size}", label_visibility="collapsed")
-            if cC.button("❌ Remove", key=f"d_{size}"): del prices[size]; save_settings(settings); st.rerun()
+            if cC.button("❌ Remove", key=f"d_{size}"): del prices[size]; save_settings_to_sheet(settings); st.rerun()
                     
         st.write("---")
         c1, c2, c3 = st.columns(3)
@@ -1366,29 +1353,36 @@ elif menu == "⚙️ Master Settings":
         n_l = c2.text_input("Length (e.g. 48)", key="set_nl")
         n_p = c3.number_input("Base Price", value=0, step=1000, key="set_np")
         if st.button("➕ Add New Size", key="btn_set_sz") and n_w and n_l and n_p > 0:
-            settings['prices'][f"{n_w}x{n_l}"] = n_p; save_settings(settings); st.rerun()
+            settings['prices'][f"{n_w}x{n_l}"] = n_p; save_settings_to_sheet(settings); st.rerun()
 
     with tab2:
         st.subheader("Edit/Remove Add-ons")
         addons = settings['addons']
+        
+        # Edit the Special Speed Label Name
+        lh_label = settings.get('lh_label', 'Low+High Speed Extra')
+        cA, cB, cC = st.columns([2, 2, 1])
+        cA.write("**Special Speed Label Name:**")
+        new_lh_label = cB.text_input("Label", value=lh_label, key="set_lh_label", label_visibility="collapsed")
+        if cC.button("💾 Rename Label", key="btn_ren_lh"):
+            settings['lh_label'] = new_lh_label
+            save_settings_to_sheet(settings); st.rerun()
+            
+        st.write("---")
+            
         for name, price in list(addons.items()):
-            if name in ["LowHighExtra"]:
-                cA, cB = st.columns([3, 2])
-                cA.write(f"**{name}** (Speed Label Only)")
-                addons[name] = price
-            else:
-                cA, cB, cC = st.columns([2, 2, 1])
-                cA.write(f"**{name}**")
-                addons[name] = cB.number_input("Price", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
-                if cC.button("❌ Remove", key=f"da_{name}"): del addons[name]; save_settings(settings); st.rerun()
+            cA, cB, cC = st.columns([2, 2, 1])
+            cA.write(f"**{name}**")
+            addons[name] = cB.number_input("Price", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
+            if cC.button("❌ Remove", key=f"da_{name}"): del addons[name]; save_settings_to_sheet(settings); st.rerun()
                         
-        if st.button("💾 Save Add-on Changes", type="primary", key="btn_set_add_save"): save_settings(settings); st.success("Updated!")
+        if st.button("💾 Save Add-on Changes", type="primary", key="btn_set_add_save"): save_settings_to_sheet(settings); st.success("Updated!")
         st.write("---")
         c1, c2 = st.columns(2)
         new_a = c1.text_input("New Add-on Name", key="set_na")
         new_p = c2.number_input("Add-on Price", value=0, step=500, key="set_nap")
         if st.button("➕ Add Option", key="btn_set_add") and new_a and new_p > 0:
-            settings['addons'][new_a] = new_p; save_settings(settings); st.rerun()
+            settings['addons'][new_a] = new_p; save_settings_to_sheet(settings); st.rerun()
                 
     with tab3:
         st.subheader("Manage GST Percentages (%)")
@@ -1396,11 +1390,11 @@ elif menu == "⚙️ Master Settings":
         for g in list(gst_rates):
             cA, cB = st.columns([3, 1])
             cA.write(f"**{g}%** GST")
-            if cB.button("❌ Remove", key=f"dgst_{g}"): gst_rates.remove(g); settings["gst_rates"] = gst_rates; save_settings(settings); st.rerun()
+            if cB.button("❌ Remove", key=f"dgst_{g}"): gst_rates.remove(g); settings["gst_rates"] = gst_rates; save_settings_to_sheet(settings); st.rerun()
         st.write("---")
         n_gst = st.number_input("Add New GST Rate (%)", min_value=1, max_value=100, step=1, key="set_ngst")
         if st.button("➕ Add New GST %", key="btn_set_gst"):
-            if n_gst not in gst_rates: gst_rates.append(n_gst); gst_rates.sort(); settings["gst_rates"] = gst_rates; save_settings(settings); st.rerun()
+            if n_gst not in gst_rates: gst_rates.append(n_gst); gst_rates.sort(); settings["gst_rates"] = gst_rates; save_settings_to_sheet(settings); st.rerun()
 
     with tab4:
         st.subheader("Manage HSN Codes")
@@ -1408,8 +1402,8 @@ elif menu == "⚙️ Master Settings":
         for h in list(hsn_codes):
             cA, cB = st.columns([3, 1])
             cA.write(f"**{h}**")
-            if cB.button("❌ Remove", key=f"dhsn_{h}"): hsn_codes.remove(h); settings["hsn_codes"] = hsn_codes; save_settings(settings); st.rerun()
+            if cB.button("❌ Remove", key=f"dhsn_{h}"): hsn_codes.remove(h); settings["hsn_codes"] = hsn_codes; save_settings_to_sheet(settings); st.rerun()
         st.write("---")
         n_hsn = st.text_input("Add New HSN Code", key="set_nhsn")
         if st.button("➕ Add New HSN", key="btn_set_hsn") and n_hsn:
-            if n_hsn not in hsn_codes: hsn_codes.append(n_hsn); hsn_codes.sort(); settings["hsn_codes"] = hsn_codes; save_settings(settings); st.rerun()
+            if n_hsn not in hsn_codes: hsn_codes.append(n_hsn); hsn_codes.sort(); settings["hsn_codes"] = hsn_codes; save_settings_to_sheet(settings); st.rerun()
