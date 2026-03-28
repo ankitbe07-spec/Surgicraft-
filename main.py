@@ -132,6 +132,12 @@ except Exception as e:
     st.error(f"Google Sheet Connection Error: {e}")
     st.stop()
 
+# --- THE MISSING DATE FUNCTION IS BACK! ---
+def safe_date(val_str):
+    parsed = pd.to_datetime(val_str, format="%d-%m-%Y", errors='coerce')
+    if pd.isna(parsed): return datetime.today()
+    return parsed
+
 def safe_int(val, fallback=1):
     try:
         if pd.isna(val) or val == '' or val == '-': return fallback
@@ -164,7 +170,40 @@ def get_spare_details(row_options, total_price):
         except: basic = 0
     return basic, gst, hsn
 
+# --- GET RAW FULL NAME FOR EDITING ---
+def get_raw_full_name(row, settings_dict):
+    opts = {}
+    try: opts = json.loads(str(row.get('Options', '{}')))
+    except: pass
+    
+    if opts.get('Is_Custom_Name', False):
+        return str(row['Size'])
+        
+    base = str(row['Size'])
+    speed = str(row.get('Speed', ''))
+    if speed == 'Spare Part': return base
+    
+    if speed not in ["-", "", "nan", "-- None --", "None"]:
+        base += f" {speed} Speed"
+        
+    custom_dtl = opts.get('Custom_Details', '')
+    if custom_dtl:
+        base += f" + {custom_dtl}"
+        
+    lh_label = settings_dict.get('lh_label', 'Low+High Speed Extra')
+    addons = [k for k,v in opts.items() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', lh_label, 'Custom_Details', 'Is_Custom_Name'] and isinstance(v, (int, float))]
+    if addons:
+        base += " + " + " + ".join(addons)
+    return base
+
 def get_item_details_str(row):
+    opts = {}
+    try: opts = json.loads(str(row.get('Options', '{}')))
+    except: pass
+    
+    if opts.get('Is_Custom_Name', False):
+        return str(row['Size']) + (" (Part)" if str(row.get('Speed')) == 'Spare Part' else "")
+        
     size_formatted = format_size(str(row['Size']))
     speed_str = str(row.get('Speed', ''))
     
@@ -175,23 +214,20 @@ def get_item_details_str(row):
     if speed_str not in ["-", "", "nan", "-- None --", "None"]:
         res += f" {speed_str} Speed"
         
-    try:
-        opts = json.loads(str(row.get('Options', '{}')))
-        custom_dtl = opts.get('Custom_Details', '')
-        if custom_dtl:
-            res += f" + {custom_dtl}"
-            
-        lh_label = settings.get('lh_label', 'Low+High Speed Extra')
-        addons = [k for k,v in opts.items() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', lh_label, 'Custom_Details'] and isinstance(v, (int, float))]
-        if addons:
-            res += " + " + " + ".join(addons)
-    except: pass
+    custom_dtl = opts.get('Custom_Details', '')
+    if custom_dtl:
+        res += f" + {custom_dtl}"
+        
+    lh_label = settings.get('lh_label', 'Low+High Speed Extra')
+    addons = [k for k,v in opts.items() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', lh_label, 'Custom_Details', 'Is_Custom_Name'] and isinstance(v, (int, float))]
+    if addons:
+        res += " + " + " + ".join(addons)
     return res
 
 def prepare_display_df_with_history(df):
     df = df.copy()
     df['DateObj'] = pd.to_datetime(df['Date'], format="%d-%m-%Y", errors='coerce')
-    df = df.sort_values('DateObj', ascending=False) # Sort newest first
+    df = df.sort_values('DateObj', ascending=False)
 
     basics, gsts, hsns = [], [], []
     old_dates, old_prices = [], []
@@ -202,14 +238,12 @@ def prepare_display_df_with_history(df):
         try: opts = json.loads(str(row.get('Options', '{}')))
         except: pass
         
-        # PURELY MANUAL OLD DATE AND PRICE
         m_old_date = opts.get('ManualOldDate', '-') if isinstance(opts, dict) else '-'
         m_old_price = opts.get('ManualOldPrice', '-') if isinstance(opts, dict) else '-'
         
         old_dates.append(m_old_date if m_old_date.strip() else "-")
         old_prices.append(m_old_price if str(m_old_price).strip() else "-")
         
-        # UI Full Detail String
         full_details.append(get_item_details_str(row))
 
         if str(row['Speed']) == 'Spare Part':
@@ -228,23 +262,8 @@ def prepare_display_df_with_history(df):
     return df
 
 def make_full_display_name(r):
-    base = f"{r['Date']} | {r['Size']}"
-    speed_val = str(r['Speed'])
-    
-    if speed_val != 'Spare Part':
-        if speed_val not in ["-", "", "nan", "-- None --", "None"]:
-            base += f" {speed_val} Speed"
-        try:
-            opts = json.loads(str(r.get('Options', '{}')))
-            custom_dtl = opts.get('Custom_Details', '')
-            if custom_dtl:
-                base += f" + {custom_dtl}"
-                
-            addons = [k for k,v in opts.items() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra'), 'Custom_Details'] and isinstance(v, (int, float))]
-            if addons: base += " + " + " + ".join(addons)
-        except: pass
-    else:
-        base += " (Part)"
+    base = f"{r['Date']} | "
+    base += get_item_details_str(r)
     return f"{base} | Rs. {r['Total_Price']}"
 
 def parse_smart_size(val_str):
@@ -313,12 +332,14 @@ def create_machine_history_pdf(party, records_df):
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
         speed_str = str(row['Speed'])
         
-        needed_height = 30
-        try: 
-            opts = json.loads(row.get('Options', '{}'))
-            addons = [k for k,v in opts.items() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra'), 'Custom_Details'] and isinstance(v, (int, float))]
-            needed_height += len(addons) * 15
+        opts = {}
+        try: opts = json.loads(str(row.get('Options', '{}')))
         except: pass
+        
+        needed_height = 30
+        if not opts.get('Is_Custom_Name', False):
+            addons = [k for k,v in opts.items() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra'), 'Custom_Details', 'Is_Custom_Name'] and isinstance(v, (int, float))]
+            needed_height += len(addons) * 15
             
         if y - needed_height < 50:
             c.showPage(); y = height - 50; c.setFont("Helvetica-Bold", 10)
@@ -342,29 +363,28 @@ def create_machine_history_pdf(party, records_df):
         c.drawRightString(cols[5]-5, text_y, f"{total_price:,.2f}")
         
         c.setFont("Helvetica", 9)
-        size_formatted = format_size(str(row['Size']))
-        base_str = f"Machine: {size_formatted}"
-        if speed_str not in ["-", "", "nan", "-- None --", "None"]:
-            base_str += f" {speed_str} Speed"
-            
-        opts = {}
-        try: opts = json.loads(str(row.get('Options', '{}')))
-        except: pass
         
-        custom_dtl = opts.get('Custom_Details', '')
-        if custom_dtl:
-            base_str += f" + {custom_dtl}"
+        if opts.get('Is_Custom_Name', False):
+            c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
+            y = text_y - 15
+        else:
+            size_formatted = format_size(str(row['Size']))
+            base_str = f"Machine: {size_formatted}"
+            if speed_str not in ["-", "", "nan", "-- None --", "None"]:
+                base_str += f" {speed_str} Speed"
             
-        c.drawString(cols[2]+5, text_y, base_str)
-        
-        temp_y = text_y - 15
-        c.setFont("Helvetica-Oblique", 8)
-        try: 
+            custom_dtl = opts.get('Custom_Details', '')
+            if custom_dtl:
+                base_str += f" + {custom_dtl}"
+                
+            c.drawString(cols[2]+5, text_y, base_str)
+            
+            temp_y = text_y - 15
+            c.setFont("Helvetica-Oblique", 8)
             for name, price in opts.items():
-                if name not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra'), 'Custom_Details'] and isinstance(price, (int, float)):
+                if name not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra'), 'Custom_Details', 'Is_Custom_Name'] and isinstance(price, (int, float)):
                     c.drawString(cols[2]+15, temp_y, f"• Add-on: {name}"); temp_y -= 15
-        except: pass
-        y = temp_y + 5
+            y = temp_y + 5
 
         row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
         
@@ -484,20 +504,20 @@ def create_part_search_pdf(party_name, part_name, df):
             c.drawString(cols[3]+5, text_y, f"Part: {format_size(str(row['Size']))}")
             y = text_y - 5
         else:
-            size_formatted = format_size(str(row['Size']))
-            base_str = f"Machine: {size_formatted}"
-            if speed_str not in ["-", "", "nan", "-- None --", "None"]:
-                base_str += f" {speed_str} Speed"
-            
             opts = {}
             try: opts = json.loads(str(row.get('Options', '{}')))
             except: pass
             
-            custom_dtl = opts.get('Custom_Details', '')
-            if custom_dtl:
-                base_str += f" + {custom_dtl}"
-                
-            c.drawString(cols[3]+5, text_y, base_str)
+            if opts.get('Is_Custom_Name', False):
+                c.drawString(cols[3]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
+            else:
+                size_formatted = format_size(str(row['Size']))
+                base_str = f"Machine: {size_formatted}"
+                if speed_str not in ["-", "", "nan", "-- None --", "None"]:
+                    base_str += f" {speed_str} Speed"
+                custom_dtl = opts.get('Custom_Details', '')
+                if custom_dtl: base_str += f" + {custom_dtl}"
+                c.drawString(cols[3]+5, text_y, base_str)
             y = text_y - 15
             
         row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
@@ -655,21 +675,21 @@ def create_all_party_report_pdf(title_str, records_df):
             c.drawString(cols[2]+5, text_y, f"Part: {format_size(str(row['Size']))} (GST: {row['GST']})")
             y = text_y - 5
         else:
-            size_formatted = format_size(str(row['Size']))
-            base_str = f"Machine: {size_formatted}"
-            if speed_str not in ["-", "", "nan", "-- None --", "None"]:
-                base_str += f" {speed_str} Speed"
-            
             opts = {}
             try: opts = json.loads(str(row.get('Options', '{}')))
             except: pass
             
-            custom_dtl = opts.get('Custom_Details', '')
-            if custom_dtl:
-                base_str += f" + {custom_dtl}"
-                
-            c.drawString(cols[2]+5, text_y, base_str)
-            c.setFont("Helvetica-Oblique", 8); c.drawString(cols[2]+15, text_y-15, "Includes Custom Add-ons")
+            if opts.get('Is_Custom_Name', False):
+                c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
+            else:
+                size_formatted = format_size(str(row['Size']))
+                base_str = f"Machine: {size_formatted}"
+                if speed_str not in ["-", "", "nan", "-- None --", "None"]:
+                    base_str += f" {speed_str} Speed"
+                custom_dtl = opts.get('Custom_Details', '')
+                if custom_dtl: base_str += f" + {custom_dtl}"
+                c.drawString(cols[2]+5, text_y, base_str)
+                c.setFont("Helvetica-Oblique", 8); c.drawString(cols[2]+15, text_y-15, "Includes Custom Add-ons")
             y = text_y - 20
 
         row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
@@ -1083,7 +1103,6 @@ elif menu == "➕ Add New Entry":
         with col3: 
             speed = st.selectbox("Speed", ["-- None --", "Low", "High", "Low+High"], key="add_speed")
         
-        # --- NEW: CUSTOM DETAILS BOX ---
         st.write("**Custom Machine Details (નામમાં પાછળ જોડવા માટે):**")
         custom_machine_details = st.text_input("અહીં લખો (દા.ત. Double Door + V.Pump 1 HP):", placeholder="Type details here to add after speed...", key="add_custom_machine_details")
 
@@ -1095,7 +1114,6 @@ elif menu == "➕ Add New Entry":
         lh_label = settings.get('lh_label', 'Low+High Speed Extra')
         if speed == "Low+High": addons_prices_struct[lh_label] = settings['addons'].get(lh_label, 0)
         
-        # Add custom text to JSON without messing up sum calculations (since it's a string, we filter it in sum)
         if custom_machine_details.strip():
             addons_prices_struct["Custom_Details"] = custom_machine_details.strip()
             
@@ -1109,7 +1127,6 @@ elif menu == "➕ Add New Entry":
         base_machine_price = int(settings['prices'].get(size, 0))
         if base_machine_price == 0: st.error(f"Base price not found for size {size}.")
         else:
-            # Filter sum to only include numbers, not the Custom Details string
             calculated_total_price = base_machine_price + sum([v for k,v in addons_prices_struct.items() if isinstance(v, (int, float))])
             st.info(f"💡 અંદાજિત ગણતરી (Idea માટે): Rs. {calculated_total_price:,.2f}/-")
             
@@ -1166,7 +1183,6 @@ elif menu == "📜 Party History & Edit":
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
                 processed_df = prepare_display_df_with_history(party_df)
                 
-                # --- NEW SMART SEARCH IN HISTORY ---
                 search_kw_hist = st.text_input("🔍 Smart Keyword Search (Filter by Item, Speed, Size...):", "", key="search_hist_party")
                 if search_kw_hist:
                     mask = processed_df.astype(str).apply(lambda x: x.str.contains(search_kw_hist, case=False, na=False)).any(axis=1)
@@ -1218,15 +1234,14 @@ elif menu == "📜 Party History & Edit":
                     st.write("---")
                     eP1, eP2 = st.columns(2)
                     new_party_name = eP1.text_input("Edit Party Name (Transfer):", value=str(row_data['Party']), key=f"edit_hist_pname_{k_suf}")
-                    new_item = eP2.text_input("Edit Item/Machine Name:", value=str(row_data['Size']), key=f"edit_hist_iname_{k_suf}")
+                    
+                    # --- FULL NAME EDITING ---
+                    current_full_name = get_raw_full_name(row_data, settings)
+                    new_item = eP2.text_input("Edit Item/Machine Name (આખું નામ બદલવા માટે):", value=current_full_name, key=f"edit_hist_iname_{k_suf}")
                     
                     opts_dict = {}
                     try: opts_dict = json.loads(str(row_data.get('Options', '{}')))
                     except: pass
-                    
-                    # EDIT CUSTOM DETAILS
-                    if not is_spare:
-                        new_custom_dtl = st.text_input("Edit Custom Details (Appended after speed):", value=opts_dict.get('Custom_Details', ''), key=f"edit_custom_dtl_{k_suf}")
                     
                     st.write("**Edit Dates & Prices (Leave blank to keep Empty):**")
                     d1, d2 = st.columns(2)
@@ -1266,21 +1281,20 @@ elif menu == "📜 Party History & Edit":
                                 opts_dict['ManualOldDate'] = n_old_date.strip() if n_old_date.strip() else "-"
                                 opts_dict['ManualOldPrice'] = n_old_price.strip() if n_old_price.strip() else "-"
                                 
+                                # NAME OVERRIDE LOGIC
+                                size_to_save = new_item.strip()
+                                opts_dict['Is_Custom_Name'] = True
+                                
                                 if is_spare:
                                     opts_dict['HSN'] = new_hsn if new_hsn and new_hsn != "None" else "-"
                                     opts_dict['Basic'] = new_basic
                                     opts_dict['GST'] = new_gst
-                                else:
-                                    if new_custom_dtl.strip():
-                                        opts_dict['Custom_Details'] = new_custom_dtl.strip()
-                                    elif 'Custom_Details' in opts_dict:
-                                        del opts_dict['Custom_Details']
                                 
                                 final_date = n_new_date.strip() if n_new_date.strip() else "-"
                                 
                                 sheet_main.update_cell(row_index_to_update, 2, new_party_name.strip().title()) 
                                 sheet_main.update_cell(row_index_to_update, 3, final_date)
-                                sheet_main.update_cell(row_index_to_update, 4, new_item)
+                                sheet_main.update_cell(row_index_to_update, 4, size_to_save)
                                 sheet_main.update_cell(row_index_to_update, 6, json.dumps(opts_dict))
                                 sheet_main.update_cell(row_index_to_update, 7, new_price)
                                 
@@ -1350,7 +1364,7 @@ elif menu == "📜 Party History & Edit":
                                 try:
                                     opts_dict = json.loads(new_options)
                                     for k, v in list(opts_dict.items()):
-                                        if k not in ['HSN', 'ManualOldDate', 'ManualOldPrice', lh_label, 'Custom_Details'] and isinstance(v, (int, float)):
+                                        if k not in ['HSN', 'ManualOldDate', 'ManualOldPrice', lh_label, 'Custom_Details', 'Is_Custom_Name'] and isinstance(v, (int, float)):
                                             opts_dict[k] = int(v * (1 + (pct_change / 100.0)))
                                     opts_dict['ManualOldDate'] = "-"
                                     opts_dict['ManualOldPrice'] = "-"
@@ -1518,17 +1532,31 @@ elif menu == "⚙️ Master Settings":
         st.subheader("Edit/Remove Add-ons")
         addons = settings['addons']
         
+        # --- NEW LOGIC: EDIT BOTH SPECIAL LABEL NAME AND PRICE ---
         lh_label = settings.get('lh_label', 'Low+High Speed Extra')
+        lh_price = settings['addons'].get(lh_label, 0)
+        
+        st.write("**Special Speed Label & Price:**")
         cA, cB, cC = st.columns([2, 2, 1])
-        cA.write("**Special Speed Label Name:**")
-        new_lh_label = cB.text_input("Label", value=lh_label, key="set_lh_label", label_visibility="collapsed")
-        if cC.button("💾 Rename Label", key="btn_ren_lh"):
-            settings['lh_label'] = new_lh_label
-            save_settings_to_sheet(settings); st.rerun()
+        new_lh_label = cA.text_input("Label Name", value=lh_label, key="set_lh_label", label_visibility="collapsed")
+        new_lh_price = cB.number_input("Price", value=lh_price, step=500, key="set_lh_price", label_visibility="collapsed")
+        
+        if cC.button("💾 Update Label", key="btn_ren_lh"):
+            if new_lh_label != lh_label:
+                settings['addons'][new_lh_label] = new_lh_price
+                if lh_label in settings['addons']:
+                    del settings['addons'][lh_label]
+                settings['lh_label'] = new_lh_label
+            else:
+                settings['addons'][lh_label] = new_lh_price
+            save_settings_to_sheet(settings)
+            st.success("Special Label Updated!")
+            st.rerun()
             
         st.write("---")
             
         for name, price in list(addons.items()):
+            if name == settings.get('lh_label', 'Low+High Speed Extra'): continue
             cA, cB, cC = st.columns([2, 2, 1])
             cA.write(f"**{name}**")
             addons[name] = cB.number_input("Price", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
