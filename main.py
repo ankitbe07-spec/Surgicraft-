@@ -46,7 +46,7 @@ DEF_SETTINGS = {
 
 if 'q_no' not in st.session_state: st.session_state.q_no = f"SUR/{datetime.now().year}/{datetime.now().strftime('%m%d%H%M')}"
 
-# --- GOOGLE SHEETS CONNECTION (Now saves Settings here too!) ---
+# --- GOOGLE SHEETS CONNECTION ---
 @st.cache_resource
 def get_sheets():
     info = json.loads(st.secrets["google_key"])
@@ -132,7 +132,6 @@ except Exception as e:
     st.error(f"Google Sheet Connection Error: {e}")
     st.stop()
 
-# --- BULLETPROOF DATA CONVERTERS ---
 def safe_int(val, fallback=1):
     try:
         if pd.isna(val) or val == '' or val == '-': return fallback
@@ -218,8 +217,11 @@ def prepare_display_df_with_history(df):
 
 def make_full_display_name(r):
     base = f"{r['Date']} | {r['Size']}"
-    if str(r['Speed']) != 'Spare Part':
-        base += f" {r['Speed']} Speed"
+    speed_val = str(r['Speed'])
+    
+    if speed_val != 'Spare Part':
+        if speed_val not in ["-", "", "nan", "-- None --", "None"]:
+            base += f" {speed_val} Speed"
         try:
             opts = json.loads(str(r.get('Options', '{}')))
             addons = [k for k in opts.keys() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra')]]
@@ -293,8 +295,10 @@ def create_history_pdf(party, records_df):
 
     for index, row in records_df.iterrows():
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
+        speed_str = str(row['Speed'])
+        
         needed_height = 20
-        if str(row['Speed']) != "Spare Part":
+        if speed_str != "Spare Part":
             needed_height = 30
             try: 
                 opts = json.loads(row.get('Options', '{}'))
@@ -325,12 +329,16 @@ def create_history_pdf(party, records_df):
         c.drawRightString(cols[6]-5, text_y, f"{total_price:,.2f}")
         
         c.setFont("Helvetica", 9)
-        if str(row['Speed']) == "Spare Part":
+        if speed_str == "Spare Part":
             part_str = f"Part: {format_size(str(row['Size']))} (Basic: Rs.{row['Basic Price']} | GST: {row['GST']})"
             c.drawString(cols[2]+5, text_y, part_str)
             y = text_y - 5
         else:
-            c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))} | Speed: {row['Speed']}")
+            if speed_str not in ["-", "", "nan", "-- None --", "None"]:
+                c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))} | Speed: {speed_str}")
+            else:
+                c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
+            
             temp_y = text_y - 15
             c.setFont("Helvetica-Oblique", 8)
             try: 
@@ -366,7 +374,8 @@ def create_part_search_pdf(party_name, part_name, df):
     
     for index, row in df.iterrows():
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
-        needed_height = 20 if str(row['Speed']) == "Spare Part" else 35
+        speed_str = str(row['Speed'])
+        needed_height = 20 if speed_str == "Spare Part" else 35
         
         if y - needed_height < 50:
             c.showPage(); y = height-50; c.setFont("Helvetica-Bold", 10)
@@ -394,12 +403,13 @@ def create_part_search_pdf(party_name, part_name, df):
         c.drawRightString(cols[7]-5, text_y, f"{total_price:,.2f}")
 
         c.setFont("Helvetica", 9)
-        if str(row['Speed']) == "Spare Part":
+        if speed_str == "Spare Part":
             c.drawString(cols[3]+5, text_y, f"Part: {format_size(str(row['Size']))}")
             y = text_y - 5
         else:
             c.drawString(cols[3]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
-            c.setFont("Helvetica-Oblique", 8); c.drawString(cols[3]+15, text_y-15, f"• {row['Speed']}")
+            if speed_str not in ["-", "", "nan", "-- None --", "None"]:
+                c.setFont("Helvetica-Oblique", 8); c.drawString(cols[3]+15, text_y-15, f"• Speed: {speed_str}")
             y = text_y - 20
             
         row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
@@ -533,7 +543,8 @@ def create_all_party_report_pdf(title_str, records_df):
 
     for index, row in records_df.iterrows():
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
-        needed_height = 20 if str(row['Speed']) == "Spare Part" else 35
+        speed_str = str(row['Speed'])
+        needed_height = 20 if speed_str == "Spare Part" else 35
             
         if y - needed_height < 50:
             c.showPage(); y = height - 50; c.setFont("Helvetica-Bold", 10)
@@ -548,15 +559,16 @@ def create_all_party_report_pdf(title_str, records_df):
         c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date']))
         c.setFont("Helvetica-Bold", 9); c.drawString(cols[1]+5, text_y, str(row['Party'])[:25]); c.setFont("Helvetica", 9)
         c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['HSN Code'])[:8])
-        c.drawCentredString((cols[4]+cols[5])/2.0, text_y, "Part" if str(row['Speed']) == "Spare Part" else "Machine")
+        c.drawCentredString((cols[4]+cols[5])/2.0, text_y, "Part" if speed_str == "Spare Part" else "Machine")
         c.setFont("Helvetica-Bold", 10); c.drawRightString(cols[6]-5, text_y, f"{total_price:,.2f}"); c.setFont("Helvetica", 9)
         
-        if str(row['Speed']) == "Spare Part":
+        if speed_str == "Spare Part":
             c.drawString(cols[2]+5, text_y, f"Part: {format_size(str(row['Size']))} (GST: {row['GST']})")
             y = text_y - 5
         else:
-            c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))} | Speed: {row['Speed']}")
-            c.setFont("Helvetica-Oblique", 8); c.drawString(cols[2]+15, text_y-15, "Includes Custom Add-ons")
+            c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
+            if speed_str not in ["-", "", "nan", "-- None --", "None"]:
+                c.setFont("Helvetica-Oblique", 8); c.drawString(cols[2]+15, text_y-15, f"• Speed: {speed_str}")
             y = text_y - 20
 
         row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
@@ -755,9 +767,11 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                 
                 if sel_h_rec:
                     r_d = h_df[h_df['Display'] == sel_h_rec].iloc[0]
+                    k_suf = str(hash(sel_h_rec)).replace("-", "") # Unique key
+                    
                     e1, e2 = st.columns(2)
                     c_mat_index = stock_materials_full.index(str(r_d['Material Name'])) if str(r_d['Material Name']) in stock_materials_full else 0
-                    n_mat = e1.selectbox("Edit Material Name:", stock_materials_full, index=c_mat_index, key="edit_h_mat")
+                    n_mat = e1.selectbox("Edit Material Name:", stock_materials_full, index=c_mat_index, key=f"edit_h_mat_{k_suf}")
                     
                     orig_size = str(r_d['Cut Size'])
                     o_unit = "MM"
@@ -767,15 +781,15 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                     
                     st.write("**Cut Size & Unit:**")
                     es1, es2 = st.columns(2)
-                    n_cut = es1.text_input("Edit Size:", value=o_val_str, key="edit_h_size")
-                    n_unit = es2.selectbox("Edit Unit:", ["MM", "Inch", "Foot"], index=["MM", "Inch", "Foot"].index(o_unit), key="edit_h_unit")
+                    n_cut = es1.text_input("Edit Size:", value=o_val_str, key=f"edit_h_size_{k_suf}")
+                    n_unit = es2.selectbox("Edit Unit:", ["MM", "Inch", "Foot"], index=["MM", "Inch", "Foot"].index(o_unit), key=f"edit_h_unit_{k_suf}")
                     
                     e3, e4 = st.columns(2)
-                    n_qty = e3.number_input("Edit Qty:", value=safe_int(r_d['Quantity'], 1), min_value=1, key="edit_h_qty")
-                    n_margin = e4.number_input("Edit Margin (MM):", value=safe_float(r_d['Blade Margin (MM)'], 1.5), step=0.1, key="edit_h_margin")
+                    n_qty = e3.number_input("Edit Qty:", value=safe_int(r_d['Quantity'], 1), min_value=1, key=f"edit_h_qty_{k_suf}")
+                    n_margin = e4.number_input("Edit Margin (MM):", value=safe_float(r_d['Blade Margin (MM)'], 1.5), step=0.1, key=f"edit_h_margin_{k_suf}")
                     
                     b1, b2 = st.columns(2)
-                    if b1.button("💾 Update Cutting", type="primary", key="btn_upd_hexo"):
+                    if b1.button("💾 Update Cutting", type="primary", key=f"btn_upd_hexo_{k_suf}"):
                         n_val = parse_smart_size(n_cut)
                         if n_val > 0:
                             n_mm = convert_to_mm(n_val, n_unit)
@@ -788,7 +802,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                                     st.success("Updated!"); clear_all_caches(); st.rerun(); break
                         else: st.error("Invalid Size format.")
                             
-                    if b2.button("❌ Delete Cutting", key="btn_del_hexo"):
+                    if b2.button("❌ Delete Cutting", key=f"btn_del_hexo_{k_suf}"):
                         all_vals = sheet_hexo.get_all_values()
                         for i, r in enumerate(all_vals):
                             if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Material Name']) and str(r[2]) == str(r_d['Cut Size']) and str(r[3]) == str(r_d['Quantity']):
@@ -803,18 +817,20 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                 
                 if sel_s_rec:
                     r_d = s_df[s_df['Display'] == sel_s_rec].iloc[0]
+                    k_suf = str(hash(sel_s_rec)).replace("-", "")
+                    
                     st.write("---")
                     e1, e2 = st.columns(2)
-                    n_mat = e1.text_input("Edit Material Name:", value=str(r_d['Material Name']), key="edit_s_mat")
-                    n_wt = e2.number_input("Edit Weight (KG):", value=safe_float(r_d.get('Weight (KG)', 0.0)), key="edit_s_wt")
+                    n_mat = e1.text_input("Edit Material Name:", value=str(r_d['Material Name']), key=f"edit_s_mat_{k_suf}")
+                    n_wt = e2.number_input("Edit Weight (KG):", value=safe_float(r_d.get('Weight (KG)', 0.0)), key=f"edit_s_wt_{k_suf}")
                     
                     st.write("**Nevi Lumbai Nakho (Keep blank to keep old):**")
                     es1, es2 = st.columns(2)
-                    n_len = es1.text_input("New Length (e.g., 20 ke 20 1/2):", value="", key="edit_s_len")
-                    n_unit = es2.selectbox("New Unit:", ["Foot", "Inch", "MM"], key="edit_s_unit")
+                    n_len = es1.text_input("New Length (e.g., 20 ke 20 1/2):", value="", key=f"edit_s_len_{k_suf}")
+                    n_unit = es2.selectbox("New Unit:", ["Foot", "Inch", "MM"], key=f"edit_s_unit_{k_suf}")
                     
                     b1, b2 = st.columns(2)
-                    if b1.button("💾 Update Stock", type="primary", key="btn_upd_stock"):
+                    if b1.button("💾 Update Stock", type="primary", key=f"btn_upd_stock_{k_suf}"):
                         if n_len:
                             n_val = parse_smart_size(n_len)
                             if n_val > 0:
@@ -829,7 +845,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                                 sheet_stock.update(f"B{i+1}:E{i+1}", [[n_mat, n_total_ft, n_total_mm, n_wt]])
                                 st.success("Updated!"); clear_all_caches(); st.rerun(); break
                                 
-                    if b2.button("❌ Delete Stock", key="btn_del_stock"):
+                    if b2.button("❌ Delete Stock", key=f"btn_del_stock_{k_suf}"):
                         all_vals = sheet_stock.get_all_values()
                         for i, r in enumerate(all_vals):
                             if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Material Name']) and str(r[3]) == str(r_d['Total Length (MM)']):
@@ -912,24 +928,26 @@ elif menu == "✂️ Factory Parts & Cutting":
             
             if sel_rec:
                 r_d = edit_f_df[edit_f_df['Display'] == sel_rec].iloc[0]
-                e_d = st.date_input("Edit Date:", safe_date(str(r_d['Date'])), key="edit_fac_date")
+                k_suf = str(hash(sel_rec)).replace("-", "")
+                
+                e_d = st.date_input("Edit Date:", safe_date(str(r_d['Date'])), key=f"edit_fac_date_{k_suf}")
                 
                 e1, e2 = st.columns(2)
-                n_raw = e1.text_input("Edit Material:", value=str(r_d['Raw Material']), key="edit_fac_raw")
-                n_prt = e2.text_input("Edit Part Name:", value=str(r_d['Part Name']), key="edit_fac_part")
+                n_raw = e1.text_input("Edit Material:", value=str(r_d['Raw Material']), key=f"edit_fac_raw_{k_suf}")
+                n_prt = e2.text_input("Edit Part Name:", value=str(r_d['Part Name']), key=f"edit_fac_part_{k_suf}")
                 e3, e4, e5 = st.columns([1.5, 1.5, 1])
-                n_cut = e3.text_input("Edit Cutting Size:", value=str(r_d['Cutting Size']), key="edit_fac_cutsz")
-                n_final = e4.text_input("Edit Final Size:", value=str(r_d.get('Final Size', '')), key="edit_fac_finsz")
-                n_qty = e5.number_input("Edit Qty:", value=safe_int(r_d.get('Quantity', 1), 1), min_value=1, key="edit_fac_qty")
+                n_cut = e3.text_input("Edit Cutting Size:", value=str(r_d['Cutting Size']), key=f"edit_fac_cutsz_{k_suf}")
+                n_final = e4.text_input("Edit Final Size:", value=str(r_d.get('Final Size', '')), key=f"edit_fac_finsz_{k_suf}")
+                n_qty = e5.number_input("Edit Qty:", value=safe_int(r_d.get('Quantity', 1), 1), min_value=1, key=f"edit_fac_qty_{k_suf}")
                 
                 b1, b2 = st.columns(2)
-                if b1.button("💾 Update", type="primary", key="btn_upd_fac"):
+                if b1.button("💾 Update", type="primary", key=f"btn_upd_fac_{k_suf}"):
                     n_dt_str = e_d.strftime("%d-%m-%Y")
                     for i, r in enumerate(sheet_factory.get_all_values()):
                         if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Raw Material']) and r[2] == str(r_d['Part Name']) and str(r[3]) == str(r_d['Cutting Size']):
                             sheet_factory.update(f"A{i+1}:F{i+1}", [[n_dt_str, n_raw, n_prt, n_cut, n_final if n_final else "-", n_qty]])
                             st.success("Updated!"); clear_all_caches(); st.rerun(); break
-                if b2.button("❌ Delete", key="btn_del_fac"):
+                if b2.button("❌ Delete", key=f"btn_del_fac_{k_suf}"):
                     for i, r in enumerate(sheet_factory.get_all_values()):
                         if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Raw Material']) and r[2] == str(r_d['Part Name']) and str(r[3]) == str(r_d['Cutting Size']):
                             sheet_factory.delete_rows(i+1); st.success("Deleted!"); clear_all_caches(); st.rerun(); break
@@ -952,7 +970,9 @@ elif menu == "➕ Add New Entry":
         with col2:
             lengths = sorted(list(set([k.split('x')[1] for k in settings['prices'].keys() if 'x' in k])))
             l_val = st.selectbox("Length", lengths if lengths else ["0"], key="add_l")
-        with col3: speed = st.selectbox("Speed", ["Low", "High", "Low+High"], key="add_speed")
+        
+        # --- NEW OPTIONAL SPEED DROPDOWN ---
+        with col3: speed = st.selectbox("Speed", ["-- None --", "Low", "High", "Low+High"], key="add_speed")
         
         with col4:
             hsn_list = ["None"] + sorted(settings.get("hsn_codes", []))
@@ -984,7 +1004,8 @@ elif menu == "➕ Add New Entry":
             if st.button("➕ SAVE ENTRY", type="primary", key="btn_add_entry"):
                 if not party_name: st.warning("Please enter Party Name!")
                 else:
-                    sheet_main.append_row([st.session_state.q_no, party_name.strip().title(), datetime.now().strftime("%d-%m-%Y"), size, speed, json.dumps(addons_prices_struct), final_total_price])
+                    speed_val_to_save = "-" if speed == "-- None --" else speed
+                    sheet_main.append_row([st.session_state.q_no, party_name.strip().title(), datetime.now().strftime("%d-%m-%Y"), size, speed_val_to_save, json.dumps(addons_prices_struct), final_total_price])
                     st.toast("Saved! ✅"); clear_all_caches(); st.rerun()
 
     else:
@@ -1055,18 +1076,21 @@ elif menu == "📜 Party History & Edit":
                     row_data = processed_items[processed_items['Display'] == selected_display].iloc[0]
                     is_spare = (str(row_data['Speed']) == 'Spare Part')
                     
+                    # --- FIX: DYNAMIC REFRESH USING HASHED KEY ---
+                    k_suf = str(hash(selected_display)).replace("-", "")
+                    
                     st.write("---")
                     eP1, eP2 = st.columns(2)
-                    new_party_name = eP1.text_input("Edit Party Name (Transfer):", value=str(row_data['Party']), key="edit_hist_pname")
-                    new_item = eP2.text_input("Edit Item/Machine Name:", value=row_data['Size'], key="edit_hist_iname")
+                    new_party_name = eP1.text_input("Edit Party Name (Transfer):", value=str(row_data['Party']), key=f"edit_hist_pname_{k_suf}")
+                    new_item = eP2.text_input("Edit Item/Machine Name:", value=str(row_data['Size']), key=f"edit_hist_iname_{k_suf}")
                     
                     st.write("**Edit Dates & Prices (Leave blank to keep Empty):**")
                     d1, d2 = st.columns(2)
-                    n_new_date = d1.text_input("Edit New Date:", value=str(row_data['Date']) if str(row_data['Date']) not in ["-", "nan", ""] else "", key="edit_ndate")
-                    n_old_date = d2.text_input("Edit Old Date:", value=str(row_data.get('Old Date', '')) if str(row_data.get('Old Date', '')) not in ["-", "nan", ""] else "", key="edit_odate")
+                    n_new_date = d1.text_input("Edit New Date:", value=str(row_data['Date']) if str(row_data['Date']) not in ["-", "nan", ""] else "", key=f"edit_ndate_{k_suf}")
+                    n_old_date = d2.text_input("Edit Old Date:", value=str(row_data.get('Old Date', '')) if str(row_data.get('Old Date', '')) not in ["-", "nan", ""] else "", key=f"edit_odate_{k_suf}")
                     
                     d3, d4 = st.columns(2)
-                    n_old_price = d3.text_input("Edit Old Price:", value=str(row_data.get('Old Price', '')).replace('-',''), key="edit_oprice")
+                    n_old_price = d3.text_input("Edit Old Price:", value=str(row_data.get('Old Price', '')).replace('-',''), key=f"edit_oprice_{k_suf}")
                     
                     opts_dict = {}
                     try: opts_dict = json.loads(str(row_data.get('Options', '{}')))
@@ -1074,30 +1098,30 @@ elif menu == "📜 Party History & Edit":
                     
                     if is_spare:
                         old_basic, old_gst, old_hsn = get_spare_details(row_data.get('Options', '{}'), row_data['Total_Price'])
-                        new_basic = st.number_input("Edit Basic Price:", value=safe_int(old_basic, 0), step=100, key="edit_hist_sprice")
+                        new_basic = st.number_input("Edit Basic Price:", value=safe_int(old_basic, 0), step=100, key=f"edit_hist_sprice_{k_suf}")
                         
                         c1, c2 = st.columns(2)
                         with c1: 
                             hsn_list = ["None"] + sorted(settings.get("hsn_codes", []))
                             if old_hsn and old_hsn not in hsn_list and old_hsn != "-": hsn_list.append(old_hsn)
-                            hsn_sel = st.selectbox("Edit HSN:", ["-- Type New --"] + hsn_list, index=hsn_list.index(old_hsn)+1 if old_hsn in hsn_list else 0, key="edit_hist_hsnsel")
-                            if hsn_sel == "-- Type New --": new_hsn = st.text_input("📝 Type New HSN Code:", value=old_hsn if old_hsn not in hsn_list and old_hsn != "-" else "", key="edit_hist_hsnnew")
+                            hsn_sel = st.selectbox("Edit HSN:", ["-- Type New --"] + hsn_list, index=hsn_list.index(old_hsn)+1 if old_hsn in hsn_list else 0, key=f"edit_hist_hsnsel_{k_suf}")
+                            if hsn_sel == "-- Type New --": new_hsn = st.text_input("📝 Type New HSN Code:", value=old_hsn if old_hsn not in hsn_list and old_hsn != "-" else "", key=f"edit_hist_hsnnew_{k_suf}")
                             else: new_hsn = hsn_sel
                                 
-                        with c2: new_gst = st.selectbox("Edit GST:", [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28])), key="edit_hist_gst")
-                        new_price = d4.number_input("New Final Price (Auto calculated but editable):", value=int(new_basic + (new_basic * new_gst / 100)), step=100, key="edit_sp_final")
+                        with c2: new_gst = st.selectbox("Edit GST:", [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28])), key=f"edit_hist_gst_{k_suf}")
+                        new_price = d4.number_input("New Final Price (Auto calculated but editable):", value=int(new_basic + (new_basic * new_gst / 100)), step=100, key=f"edit_sp_final_{k_suf}")
                     else: 
                         old_hsn = opts_dict.get('HSN', '-')
                         c1, c2 = st.columns(2)
                         with c1:
                             hsn_list = ["None"] + sorted(settings.get("hsn_codes", []))
                             if old_hsn and old_hsn not in hsn_list and old_hsn != "-": hsn_list.append(old_hsn)
-                            hsn_sel = st.selectbox("Edit Machine HSN:", ["-- Type New --"] + hsn_list, index=hsn_list.index(old_hsn)+1 if old_hsn in hsn_list else 0, key="edit_mach_hsnsel")
-                            if hsn_sel == "-- Type New --": new_hsn = st.text_input("📝 Type New HSN Code:", value=old_hsn if old_hsn not in hsn_list and old_hsn != "-" else "", key="edit_mach_hsnnew")
+                            hsn_sel = st.selectbox("Edit Machine HSN:", ["-- Type New --"] + hsn_list, index=hsn_list.index(old_hsn)+1 if old_hsn in hsn_list else 0, key=f"edit_mach_hsnsel_{k_suf}")
+                            if hsn_sel == "-- Type New --": new_hsn = st.text_input("📝 Type New HSN Code:", value=old_hsn if old_hsn not in hsn_list and old_hsn != "-" else "", key=f"edit_mach_hsnnew_{k_suf}")
                             else: new_hsn = hsn_sel
-                        new_price = d4.number_input("New Final Price:", value=safe_int(row_data['Total_Price'], 0), step=100, key="edit_hist_mprice")
+                        new_price = d4.number_input("New Final Price:", value=safe_int(row_data['Total_Price'], 0), step=100, key=f"edit_hist_mprice_{k_suf}")
                     
-                    if st.button("💾 Update Record", type="primary", key="btn_upd_hist"):
+                    if st.button("💾 Update Record", type="primary", key=f"btn_upd_hist_{k_suf}"):
                         if not new_party_name: st.warning("Party Name cannot be empty!")
                         else:
                             all_values = sheet_main.get_all_values()
@@ -1202,7 +1226,7 @@ elif menu == "📜 Party History & Edit":
                                 new_party_target.strip().title(), 
                                 dt_str, 
                                 r_d['Size'], 
-                                r_d['Speed'], 
+                                str(r_d['Speed']), 
                                 new_options, 
                                 new_total
                             ])
@@ -1253,7 +1277,6 @@ elif menu == "🔍 Part Price Finder":
             with c1: st.download_button("📥 Download PDF", data=pdf_buffer, file_name="Search_Result.pdf", mime="application/pdf", use_container_width=True, key="dl_pf_pdf")
             with c2: 
                 if st.button("👁️ View Preview", use_container_width=True, key="pv_pf_pdf"): display_pdf_in_app(pdf_buffer)
-
 
 # ==========================================
 # 6. MONTHLY EMAIL REPORTS PAGE
@@ -1359,7 +1382,6 @@ elif menu == "⚙️ Master Settings":
         st.subheader("Edit/Remove Add-ons")
         addons = settings['addons']
         
-        # Edit the Special Speed Label Name
         lh_label = settings.get('lh_label', 'Low+High Speed Extra')
         cA, cB, cC = st.columns([2, 2, 1])
         cA.write("**Special Speed Label Name:**")
