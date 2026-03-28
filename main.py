@@ -164,55 +164,63 @@ def get_spare_details(row_options, total_price):
         except: basic = 0
     return basic, gst, hsn
 
+def get_item_details_str(row):
+    size_formatted = format_size(str(row['Size']))
+    speed_str = str(row.get('Speed', ''))
+    
+    if speed_str == 'Spare Part':
+        return f"{size_formatted} (Part)"
+        
+    res = size_formatted
+    if speed_str not in ["-", "", "nan", "-- None --", "None"]:
+        res += f" {speed_str} Speed"
+        
+    try:
+        opts = json.loads(str(row.get('Options', '{}')))
+        lh_label = settings.get('lh_label', 'Low+High Speed Extra')
+        addons = [k for k in opts.keys() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', lh_label]]
+        if addons:
+            res += " + " + " + ".join(addons)
+    except: pass
+    return res
+
 def prepare_display_df_with_history(df):
     df = df.copy()
     df['DateObj'] = pd.to_datetime(df['Date'], format="%d-%m-%Y", errors='coerce')
-    df = df.sort_values('DateObj')
+    df = df.sort_values('DateObj', ascending=False) # Sort newest first
 
     basics, gsts, hsns = [], [], []
     old_dates, old_prices = [], []
-    history_tracker = {}
+    full_details = []
 
     for idx, row in df.iterrows():
-        item_name = str(row['Size']).strip().lower()
-        party_name = str(row['Party']).strip().lower()
-        current_price = row.get('Total_Price', 0)
-        current_date = str(row['Date'])
-        tracking_key = f"{party_name}_{item_name}"
-        
         opts = {}
         try: opts = json.loads(str(row.get('Options', '{}')))
         except: pass
         
-        manual_old_date = opts.get('ManualOldDate', '') if isinstance(opts, dict) else ''
-        manual_old_price = opts.get('ManualOldPrice', '') if isinstance(opts, dict) else ''
+        # PURELY MANUAL OLD DATE AND PRICE (No Auto-Fill)
+        m_old_date = opts.get('ManualOldDate', '-') if isinstance(opts, dict) else '-'
+        m_old_price = opts.get('ManualOldPrice', '-') if isinstance(opts, dict) else '-'
         
-        if tracking_key in history_tracker:
-            old_dates.append(history_tracker[tracking_key]['date'])
-            old_prices.append(history_tracker[tracking_key]['price'])
-        else:
-            old_dates.append("-")
-            old_prices.append("-")
-            
-        history_tracker[tracking_key] = {'date': current_date, 'price': current_price}
+        old_dates.append(m_old_date if m_old_date.strip() else "-")
+        old_prices.append(m_old_price if str(m_old_price).strip() else "-")
         
-        if manual_old_date: old_dates[-1] = manual_old_date
-        if manual_old_price: old_prices[-1] = manual_old_price
+        # UI Full Detail String
+        full_details.append(get_item_details_str(row))
 
         if str(row['Speed']) == 'Spare Part':
-            b, g, h = get_spare_details(row.get('Options', '{}'), current_price)
+            b, g, h = get_spare_details(row.get('Options', '{}'), row.get('Total_Price', 0))
             basics.append(b); gsts.append(f"{g}%" if g > 0 else "-"); hsns.append(h if h and h != "None" else "-")
         else:
-            machine_hsn = opts.get('HSN', '-') if isinstance(opts, dict) else '-'
-            basics.append("-"); gsts.append("-"); hsns.append(machine_hsn)
+            basics.append("-"); gsts.append("-"); hsns.append("-") # Machines don't use row-level HSN
             
     df['Old Date'] = old_dates
     df['Old Price'] = old_prices
     df['HSN Code'] = hsns
     df['Basic Price'] = basics
     df['GST'] = gsts
+    df['Item Details'] = full_details
     
-    df = df.sort_values('DateObj', ascending=False)
     return df
 
 def make_full_display_name(r):
@@ -269,19 +277,100 @@ def draw_grid_lines(c, y_top, y_bot, cols):
     c.line(cols[0], y_bot, cols[-1], y_bot) 
     for col in cols: c.line(col, y_top, col, y_bot) 
 
-def create_history_pdf(party, records_df):
+# --- NEW SEPARATE PDF FOR MACHINES ---
+def create_machine_history_pdf(party, records_df):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=landscape(A4))
     width, height = landscape(A4)
     
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(40, height - 40, "Surgicraft Industries HHP Machine Price List")
+    # UPDATED HEADING FOR MACHINES
+    c.drawString(40, height - 40, "Surgicraft Industries HHP Machine Price List (GST Extra) HSN CODE - 8419")
     c.setFont("Helvetica-Bold", 11)
     c.drawString(40, height - 60, f"Party Name: {party}")
     c.drawString(width - 150, height - 60, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
     y = height - 90
     c.setFont("Helvetica-Bold", 10)
+    # HSN COLUMN REMOVED (5 columns left)
+    cols = [40, 110, 180, 580, 680, 780] 
+    
+    row_y_top = y + 20; row_y_bot = y - 5
+    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date")
+    c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
+    c.drawString(cols[2]+5, y+2, "Item Description / Machine Details")
+    c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Old Price")
+    c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "New Final Price")
+    draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
+
+    for index, row in records_df.iterrows():
+        total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
+        speed_str = str(row['Speed'])
+        
+        needed_height = 30
+        try: 
+            opts = json.loads(row.get('Options', '{}'))
+            addons = [k for k in opts.keys() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra')]]
+            needed_height += len(addons) * 15
+        except: pass
+            
+        if y - needed_height < 50:
+            c.showPage(); y = height - 50; c.setFont("Helvetica-Bold", 10)
+            row_y_top = y + 20; row_y_bot = y - 5
+            c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date"); c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
+            c.drawString(cols[2]+5, y+2, "Item Description / Machine Details")
+            c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Old Price"); c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "New Final Price")
+            draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
+
+        row_y_top = y; text_y = y - 15 
+        
+        c.setFont("Helvetica-Bold", 9)
+        dt_val = str(row['Date']) if str(row['Date']) not in ["-", "nan", ""] else ""
+        c.drawCentredString((cols[0]+cols[1])/2.0, text_y, dt_val)
+        odt_val = str(row['Old Date']) if str(row['Old Date']) not in ["-", "nan", ""] else ""
+        c.drawCentredString((cols[1]+cols[2])/2.0, text_y, odt_val)
+        
+        old_price_str = f"{row['Old Price']:,.2f}" if str(row['Old Price']).replace('.','').isdigit() else str(row['Old Price'])
+        if old_price_str == "-" or old_price_str == "nan": old_price_str = ""
+        c.drawRightString(cols[4]-5, text_y, old_price_str)
+        c.drawRightString(cols[5]-5, text_y, f"{total_price:,.2f}")
+        
+        c.setFont("Helvetica", 9)
+        size_formatted = format_size(str(row['Size']))
+        if speed_str not in ["-", "", "nan", "-- None --", "None"]:
+            c.drawString(cols[2]+5, text_y, f"Machine: {size_formatted} {speed_str} Speed")
+        else:
+            c.drawString(cols[2]+5, text_y, f"Machine: {size_formatted}")
+        
+        temp_y = text_y - 15
+        c.setFont("Helvetica-Oblique", 8)
+        try: 
+            addons_dict = json.loads(row.get('Options', '{}'))
+            for name, price in addons_dict.items():
+                if name not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra')]:
+                    c.drawString(cols[2]+15, temp_y, f"• Add-on: {name}"); temp_y -= 15
+        except: pass
+        y = temp_y + 5
+
+        row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
+        
+    c.save(); buffer.seek(0); return buffer
+
+# --- SEPARATE PDF FOR SPARE PARTS ---
+def create_parts_history_pdf(party, records_df):
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=landscape(A4))
+    width, height = landscape(A4)
+    
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(40, height - 40, "Surgicraft Spare Parts Price List")
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, height - 60, f"Party Name: {party}")
+    c.drawString(width - 150, height - 60, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
+    
+    y = height - 90
+    c.setFont("Helvetica-Bold", 10)
+    # RETAINS HSN COLUMN
     cols = [40, 110, 180, 500, 560, 660, 780] 
     
     row_y_top = y + 20; row_y_bot = y - 5
@@ -295,16 +384,7 @@ def create_history_pdf(party, records_df):
 
     for index, row in records_df.iterrows():
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
-        speed_str = str(row['Speed'])
-        
         needed_height = 20
-        if speed_str != "Spare Part":
-            needed_height = 30
-            try: 
-                opts = json.loads(row.get('Options', '{}'))
-                addons = [k for k in opts.keys() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra')]]
-                needed_height += len(addons) * 15
-            except: pass
             
         if y - needed_height < 50:
             c.showPage(); y = height - 50; c.setFont("Helvetica-Bold", 10)
@@ -329,26 +409,9 @@ def create_history_pdf(party, records_df):
         c.drawRightString(cols[6]-5, text_y, f"{total_price:,.2f}")
         
         c.setFont("Helvetica", 9)
-        if speed_str == "Spare Part":
-            part_str = f"Part: {format_size(str(row['Size']))} (Basic: Rs.{row['Basic Price']} | GST: {row['GST']})"
-            c.drawString(cols[2]+5, text_y, part_str)
-            y = text_y - 5
-        else:
-            size_formatted = format_size(str(row['Size']))
-            if speed_str not in ["-", "", "nan", "-- None --", "None"]:
-                c.drawString(cols[2]+5, text_y, f"Machine: {size_formatted} {speed_str} Speed")
-            else:
-                c.drawString(cols[2]+5, text_y, f"Machine: {size_formatted}")
-            
-            temp_y = text_y - 15
-            c.setFont("Helvetica-Oblique", 8)
-            try: 
-                addons_dict = json.loads(row.get('Options', '{}'))
-                for name, price in addons_dict.items():
-                    if name not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra')]:
-                        c.drawString(cols[2]+15, temp_y, f"• Add-on: {name}"); temp_y -= 15
-            except: pass
-            y = temp_y + 5
+        part_str = f"Part: {format_size(str(row['Size']))} (Basic: Rs.{row['Basic Price']} | GST: {row['GST']})"
+        c.drawString(cols[2]+5, text_y, part_str)
+        y = text_y - 5
 
         row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
         
@@ -561,6 +624,8 @@ def create_all_party_report_pdf(title_str, records_df):
         c.setFont("Helvetica", 9)
         c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date']))
         c.setFont("Helvetica-Bold", 9); c.drawString(cols[1]+5, text_y, str(row['Party'])[:25]); c.setFont("Helvetica", 9)
+        
+        # Monthly report handles both Machine and Parts, but HSN is '-' for machines now
         c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['HSN Code'])[:8])
         c.drawCentredString((cols[4]+cols[5])/2.0, text_y, "Part" if speed_str == "Spare Part" else "Machine")
         c.setFont("Helvetica-Bold", 10); c.drawRightString(cols[6]-5, text_y, f"{total_price:,.2f}"); c.setFont("Helvetica", 9)
@@ -966,11 +1031,21 @@ elif menu == "➕ Add New Entry":
     display_header()
     party_sel = st.selectbox("Select Party:", ["-- New Party --"] + unique_parties_list, index=0, key="add_party_sel")
     party_name = st.text_input("Enter New Party Name:", key="add_party_new") if party_sel == "-- New Party --" else party_sel
+    
+    # --- NEW FEATURE: SHOW HISTORY BEFORE ADDING TO PREVENT DOUBLE ENTRY ---
+    if party_name and party_name != "-- New Party --" and not main_df.empty:
+        party_hist = main_df[main_df['Party'].astype(str).str.strip().str.title() == party_name.strip().title()].copy()
+        if not party_hist.empty:
+            st.markdown(f"📜 **{party_name} નો જૂનો રેકોર્ડ (Double Entry Check):**")
+            p_hist_proc = prepare_display_df_with_history(party_hist)
+            disp_hist = p_hist_proc[['Date', 'Item Details', 'Total_Price']].rename(columns={'Total_Price': 'Final Price (Rs)'})
+            st.dataframe(disp_hist, use_container_width=True, hide_index=True)
+            
     st.write("---")
     entry_type = st.radio("What do you want to add?", ["Machine", "Spare Part / Custom Item"], horizontal=True, key="add_entry_type")
     
     if entry_type == "Machine":
-        col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
+        col1, col2, col3 = st.columns([2, 2, 2])
         with col1:
             widths = sorted(list(set([k.split('x')[0] for k in settings['prices'].keys() if 'x' in k])))
             w_val = st.selectbox("Width", widths if widths else ["0"], key="add_w")
@@ -981,11 +1056,7 @@ elif menu == "➕ Add New Entry":
         # --- OPTIONAL SPEED DROPDOWN ---
         with col3: speed = st.selectbox("Speed", ["-- None --", "Low", "High", "Low+High"], key="add_speed")
         
-        with col4:
-            hsn_list = ["None"] + sorted(settings.get("hsn_codes", []))
-            hsn_sel_m = st.selectbox("HSN Code:", ["-- Type New --"] + hsn_list, key="mach_hsn_sel")
-            if hsn_sel_m == "-- Type New --": hsn_val_m = st.text_input("New HSN:", value="", key="mach_hsn_new")
-            else: hsn_val_m = hsn_sel_m
+        # HSN REMOVED FROM MACHINE ENTIRELY
 
         size = f"{w_val}x{l_val}"
         st.write("### Add-ons")
@@ -994,7 +1065,6 @@ elif menu == "➕ Add New Entry":
         
         lh_label = settings.get('lh_label', 'Low+High Speed Extra')
         if speed == "Low+High": addons_prices_struct[lh_label] = settings['addons'].get(lh_label, 0)
-        addons_prices_struct["HSN"] = hsn_val_m
             
         for addon_name in settings['addons']:
             if addon_name == lh_label: continue
@@ -1006,8 +1076,8 @@ elif menu == "➕ Add New Entry":
         base_machine_price = int(settings['prices'].get(size, 0))
         if base_machine_price == 0: st.error(f"Base price not found for size {size}.")
         else:
-            # --- NEW MANUAL PRICE INPUT ---
-            calculated_total_price = base_machine_price + sum([v for k,v in addons_prices_struct.items() if k != "HSN"])
+            # --- MANUAL PRICE INPUT ---
+            calculated_total_price = base_machine_price + sum([v for k,v in addons_prices_struct.items()])
             st.info(f"💡 અંદાજિત ગણતરી (Idea માટે): Rs. {calculated_total_price:,.2f}/-")
             
             final_total_price = st.number_input("Final Machine Price (કાગળમાંથી જોઈને જાતે લખો):", value=calculated_total_price, step=100, key="btn_add_manual_price")
@@ -1063,16 +1133,33 @@ elif menu == "📜 Party History & Edit":
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
                 processed_df = prepare_display_df_with_history(party_df)
                 
-                display_df = processed_df[['Date', 'Old Date', 'Party', 'Size', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']].copy()
-                display_df['Size'] = display_df['Size'].apply(format_size)
+                # SHOW FULL DETAILS IN UI TABLE
+                display_df = processed_df[['Date', 'Old Date', 'Party', 'Item Details', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']].copy()
                 display_df.rename(columns={'Total_Price': 'New Final Price(Rs)'}, inplace=True)
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
                 
-                hist_pdf = create_history_pdf(pdf_party, processed_df)
+                # --- SPLIT PDF DOWNLOAD BUTTONS ---
+                mach_df = processed_df[processed_df['Speed'] != 'Spare Part']
+                part_df = processed_df[processed_df['Speed'] == 'Spare Part']
+                
+                st.write("---")
                 c1, c2 = st.columns(2)
-                with c1: st.download_button("📥 Download PDF", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf", use_container_width=True, key="dl_view_pdf")
-                with c2: 
-                    if st.button("👁️ View Preview", use_container_width=True, key="pv_view_pdf"): display_pdf_in_app(hist_pdf)
+                
+                with c1:
+                    if not mach_df.empty:
+                        mach_pdf = create_machine_history_pdf(pdf_party, mach_df)
+                        st.download_button("📥 Download Machine PDF", data=mach_pdf, file_name=f"{pdf_party}_Machines.pdf", mime="application/pdf", use_container_width=True)
+                        if st.button("👁️ Preview Machine PDF", use_container_width=True): display_pdf_in_app(mach_pdf)
+                    else:
+                        st.info("આ પાર્ટીમાં કોઈ મશીનનો રેકોર્ડ નથી.")
+                        
+                with c2:
+                    if not part_df.empty:
+                        part_pdf = create_parts_history_pdf(pdf_party, part_df)
+                        st.download_button("📥 Download Spare Parts PDF", data=part_pdf, file_name=f"{pdf_party}_Parts.pdf", mime="application/pdf", use_container_width=True)
+                        if st.button("👁️ Preview Spare Parts PDF", use_container_width=True): display_pdf_in_app(part_pdf)
+                    else:
+                        st.info("આ પાર્ટીમાં કોઈ સ્પેર-પાર્ટ્સનો રેકોર્ડ નથી.")
 
         with tab2:
             edit_party = st.selectbox("1. Select Party (Edit):", ["-- Select Party --"] + unique_parties_list, key="edit_hist_party")
@@ -1121,14 +1208,7 @@ elif menu == "📜 Party History & Edit":
                         with c2: new_gst = st.selectbox("Edit GST:", [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28])), key=f"edit_hist_gst_{k_suf}")
                         new_price = d4.number_input("New Final Price (Auto calculated but editable):", value=int(new_basic + (new_basic * new_gst / 100)), step=100, key=f"edit_sp_final_{k_suf}")
                     else: 
-                        old_hsn = opts_dict.get('HSN', '-')
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            hsn_list = ["None"] + sorted(settings.get("hsn_codes", []))
-                            if old_hsn and old_hsn not in hsn_list and old_hsn != "-": hsn_list.append(old_hsn)
-                            hsn_sel = st.selectbox("Edit Machine HSN:", ["-- Type New --"] + hsn_list, index=hsn_list.index(old_hsn)+1 if old_hsn in hsn_list else 0, key=f"edit_mach_hsnsel_{k_suf}")
-                            if hsn_sel == "-- Type New --": new_hsn = st.text_input("📝 Type New HSN Code:", value=old_hsn if old_hsn not in hsn_list and old_hsn != "-" else "", key=f"edit_mach_hsnnew_{k_suf}")
-                            else: new_hsn = hsn_sel
+                        # NO HSN SELECTION FOR MACHINE IN EDIT
                         new_price = d4.number_input("New Final Price:", value=safe_int(row_data['Total_Price'], 0), step=100, key=f"edit_hist_mprice_{k_suf}")
                     
                     if st.button("💾 Update Record", type="primary", key=f"btn_upd_hist_{k_suf}"):
@@ -1144,11 +1224,12 @@ elif menu == "📜 Party History & Edit":
                             if row_index_to_update != -1:
                                 opts_dict['ManualOldDate'] = n_old_date.strip() if n_old_date.strip() else "-"
                                 opts_dict['ManualOldPrice'] = n_old_price.strip() if n_old_price.strip() else "-"
-                                opts_dict['HSN'] = new_hsn if new_hsn and new_hsn != "None" else "-"
                                 
                                 if is_spare:
+                                    opts_dict['HSN'] = new_hsn if new_hsn and new_hsn != "None" else "-"
                                     opts_dict['Basic'] = new_basic
                                     opts_dict['GST'] = new_gst
+                                # Machine HSN is removed, so we don't save it
                                 
                                 final_date = n_new_date.strip() if n_new_date.strip() else "-"
                                 
@@ -1276,8 +1357,7 @@ elif menu == "🔍 Part Price Finder":
             st.info("Select filters or type a keyword to search.")
         else:
             processed_df = prepare_display_df_with_history(filtered_df)
-            display_df = processed_df[['Date', 'Old Date', 'Party', 'Size', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']].copy()
-            display_df['Size'] = display_df['Size'].apply(format_size)
+            display_df = processed_df[['Date', 'Old Date', 'Party', 'Item Details', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']].copy()
             display_df.rename(columns={'Total_Price': 'New Final Price(Rs)'}, inplace=True)
             
             st.dataframe(display_df, use_container_width=True, hide_index=True)
