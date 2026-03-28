@@ -442,9 +442,6 @@ def create_factory_pdf(raw_material, search_part, df, orientation="Aadu (Landsca
         
         c.drawCentredString((cols[5]+cols[6])/2.0, text_y, str(row['Quantity']))
         
-        # Empty column for writing date manually
-        # c.drawString((cols[6]+cols[7])/2.0, text_y, "") 
-        
         row_y_bot = text_y - 5; draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
         
     c.save(); buffer.seek(0); return buffer
@@ -634,22 +631,22 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
     with htab1:
         st.write("**Ankit bhai mate - Cutting Entry & Estimator:**")
         c1, c2 = st.columns(2)
-        mat_sel = c1.selectbox("1. Material Select Karo:", ["-- Select --", "-- New Material --"] + stock_materials_full)
-        if mat_sel == "-- New Material --": cut_mat = c1.text_input("📝 Navu Material Lakho (e.g. Hex 22mm 304):")
+        mat_sel = c1.selectbox("1. Material Select Karo:", ["-- Select --", "-- New Material --"] + stock_materials_full, key="mat_sel_hexo")
+        if mat_sel == "-- New Material --": cut_mat = c1.text_input("📝 Navu Material Lakho (e.g. Hex 22mm 304):", key="new_mat_hexo")
         else: cut_mat = mat_sel
         
         st.write("**2. Cut Size (e.g., 65, 4 1/8, 4.25):**")
         sc1, sc2 = st.columns(2)
-        cut_size_str = sc1.text_input("Size Lakho (Fractions chale che):", value="")
-        cut_unit = sc2.selectbox("Ekam (Unit) Select:", ["MM", "Inch", "Foot"])
+        cut_size_str = sc1.text_input("Size Lakho (Fractions chale che):", value="", key="cut_size_hexo")
+        cut_unit = sc2.selectbox("Ekam (Unit) Select:", ["MM", "Inch", "Foot"], key="unit_hexo")
         
         c3, c4 = st.columns(2)
-        cut_qty = c3.number_input("3. Tukda ni Quantity (Nang):", min_value=1, step=1)
-        blade_margin = c4.number_input("4. Blade Margin (Wastage):", value=1.5, step=0.1)
+        cut_qty = c3.number_input("3. Tukda ni Quantity (Nang):", min_value=1, step=1, key="qty_hexo")
+        blade_margin = c4.number_input("4. Blade Margin (Wastage):", value=1.5, step=0.1, key="margin_hexo")
         
         st.write("---")
         st.write("🧠 **Live Ganatri (Estimator):**")
-        rod_foot = st.number_input("Standard Ladi (Rod) Lumbai (Foot ma) - Optional:", min_value=0.0, value=0.0, step=1.0)
+        rod_foot = st.number_input("Standard Ladi (Rod) Lumbai (Foot ma) - Optional:", min_value=0.0, value=0.0, step=1.0, key="rod_hexo")
         
         if cut_size_str and cut_mat and cut_mat != "-- Select --":
             size_val = parse_smart_size(cut_size_str)
@@ -671,7 +668,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                     wastage = (rods_needed * rod_mm) - total_used_mm
                     st.success(f"📌 **Saliya Ganatri:** Tamare **{rods_needed} aakha saliya** joise. (Chhelle {mm_to_foot_inch(wastage)} no tukdo vadhse).")
                 
-                if st.button("✂️ Kapi Nakho (Save & Update Stock)", type="primary"):
+                if st.button("✂️ Kapi Nakho (Save & Update Stock)", type="primary", key="btn_save_hexo"):
                     dt_str = datetime.now().strftime("%d-%m-%Y")
                     if mat_sel == "-- New Material --" and cut_mat not in stock_materials_full:
                         sheet_stock.append_row([dt_str, cut_mat.strip(), 0, 0, 0])
@@ -682,15 +679,15 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
 
     with htab2:
         st.write("**Papa mate - Navo maal aave tyare ahiya nakhvo:**")
-        new_mat_name = st.text_input("1. Raw Material Naam (e.g., SS 304 28MM Round):")
+        new_mat_name = st.text_input("1. Raw Material Naam (e.g., SS 304 28MM Round):", key="new_stock_name")
         
         st.write("**2. Maap (Lumbai - Fractions chale che):**")
         col_v, col_u, col_k = st.columns(3)
-        in_val_str = col_v.text_input("Lumbai Lakho (e.g. 20 ke 20 1/2):", value="")
-        in_unit = col_u.selectbox("3. Ekam (Unit):", ["Foot", "Inch", "MM"])
-        weight_kg = col_k.number_input("4. Total Vajan (KG) - Optional:", min_value=0.0, step=1.0)
+        in_val_str = col_v.text_input("Lumbai Lakho (e.g. 20 ke 20 1/2):", value="", key="new_stock_len")
+        in_unit = col_u.selectbox("3. Ekam (Unit):", ["Foot", "Inch", "MM"], key="new_stock_unit")
+        weight_kg = col_k.number_input("4. Total Vajan (KG) - Optional:", min_value=0.0, step=1.0, key="new_stock_weight")
         
-        if st.button("💾 Save Navo Maal", type="primary"):
+        if st.button("💾 Save Navo Maal", type="primary", key="btn_save_stock"):
             in_val = parse_smart_size(in_val_str) if in_val_str else 0
             if not new_mat_name or in_val <= 0: st.warning("Material nu naam ane sachi lumbai nakho!")
             else:
@@ -701,7 +698,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
 
     with htab3:
         st.write("**🔍 Smart Search & Godown PDF:**")
-        search_txt = st.text_input("Material nu naam shodhva ahiya lakho (e.g., '32', 'dr', 'patti'):", value="")
+        search_txt = st.text_input("Material nu naam shodhva ahiya lakho (e.g., '32', 'dr', 'patti'):", value="", key="search_hexo_pdf")
         
         if not stock_df.empty:
             filtered_mats = [m for m in stock_materials_full if search_txt.lower() in m.lower()] if search_txt else stock_materials_full
@@ -724,26 +721,26 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                         st.dataframe(mat_hexo_df[['Date', 'Cut Size', 'Quantity', 'Blade Margin (MM)', 'Total Used (MM)']], use_container_width=True, hide_index=True)
                         pdf_buf = create_hexo_pdf(mat, mat_in, mat_out, balance_mm, mat_hexo_df)
                         c_dl, c_pv = st.columns(2)
-                        with c_dl: st.download_button("📥 Download PDF", data=pdf_buf, file_name=f"{mat}_Report.pdf", mime="application/pdf", use_container_width=True)
+                        with c_dl: st.download_button("📥 Download PDF", data=pdf_buf, file_name=f"{mat}_Report.pdf", mime="application/pdf", use_container_width=True, key=f"dl_{mat}")
                         with c_pv: 
                             if st.button(f"👁️ View Preview", key=f"pv_{mat}", use_container_width=True): display_pdf_in_app(pdf_buf)
 
     with htab4:
         st.write("**✏️ Edit ke Delete Karo (Hexo & Stock):**")
-        edit_type = st.radio("Shu sudharvu che?", ["✂️ Cutting Entry (Stock Out)", "📥 Stock Entry (Navo Maal)"], horizontal=True)
+        edit_type = st.radio("Shu sudharvu che?", ["✂️ Cutting Entry (Stock Out)", "📥 Stock Entry (Navo Maal)"], horizontal=True, key="edit_type_radio")
         
         if edit_type == "✂️ Cutting Entry (Stock Out)":
             if hexo_df.empty: st.info("Koi cutting entry nathi.")
             else:
                 h_df = hexo_df.copy()
                 h_df['Display'] = h_df['Date'].astype(str) + " | " + h_df['Material Name'].astype(str) + " | Size: " + h_df['Cut Size'].astype(str) + " | Qty: " + h_df['Quantity'].astype(str)
-                sel_h_rec = st.selectbox("Select Record to Edit (Cutting):", h_df['Display'].tolist())
+                sel_h_rec = st.selectbox("Select Record to Edit (Cutting):", h_df['Display'].tolist(), key="edit_hexo_sel")
                 
                 if sel_h_rec:
                     r_d = h_df[h_df['Display'] == sel_h_rec].iloc[0]
                     e1, e2 = st.columns(2)
                     c_mat_index = stock_materials_full.index(str(r_d['Material Name'])) if str(r_d['Material Name']) in stock_materials_full else 0
-                    n_mat = e1.selectbox("Edit Material Name:", stock_materials_full, index=c_mat_index)
+                    n_mat = e1.selectbox("Edit Material Name:", stock_materials_full, index=c_mat_index, key="edit_h_mat")
                     
                     orig_size = str(r_d['Cut Size'])
                     o_unit = "MM"
@@ -753,15 +750,15 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                     
                     st.write("**Cut Size & Unit:**")
                     es1, es2 = st.columns(2)
-                    n_cut = es1.text_input("Edit Size:", value=o_val_str)
-                    n_unit = es2.selectbox("Edit Unit:", ["MM", "Inch", "Foot"], index=["MM", "Inch", "Foot"].index(o_unit))
+                    n_cut = es1.text_input("Edit Size:", value=o_val_str, key="edit_h_size")
+                    n_unit = es2.selectbox("Edit Unit:", ["MM", "Inch", "Foot"], index=["MM", "Inch", "Foot"].index(o_unit), key="edit_h_unit")
                     
                     e3, e4 = st.columns(2)
-                    n_qty = e3.number_input("Edit Qty:", value=safe_int(r_d['Quantity'], 1), min_value=1)
-                    n_margin = e4.number_input("Edit Margin (MM):", value=safe_float(r_d['Blade Margin (MM)'], 1.5), step=0.1)
+                    n_qty = e3.number_input("Edit Qty:", value=safe_int(r_d['Quantity'], 1), min_value=1, key="edit_h_qty")
+                    n_margin = e4.number_input("Edit Margin (MM):", value=safe_float(r_d['Blade Margin (MM)'], 1.5), step=0.1, key="edit_h_margin")
                     
                     b1, b2 = st.columns(2)
-                    if b1.button("💾 Update Cutting", type="primary"):
+                    if b1.button("💾 Update Cutting", type="primary", key="btn_upd_hexo"):
                         n_val = parse_smart_size(n_cut)
                         if n_val > 0:
                             n_mm = convert_to_mm(n_val, n_unit)
@@ -774,7 +771,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                                     st.success("Updated!"); clear_all_caches(); st.rerun(); break
                         else: st.error("Invalid Size format.")
                             
-                    if b2.button("❌ Delete Cutting"):
+                    if b2.button("❌ Delete Cutting", key="btn_del_hexo"):
                         all_vals = sheet_hexo.get_all_values()
                         for i, r in enumerate(all_vals):
                             if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Material Name']) and str(r[2]) == str(r_d['Cut Size']) and str(r[3]) == str(r_d['Quantity']):
@@ -785,22 +782,22 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
             else:
                 s_df = stock_df.copy()
                 s_df['Display'] = s_df['Date'].astype(str) + " | " + s_df['Material Name'].astype(str) + " | Total MM: " + s_df['Total Length (MM)'].astype(str)
-                sel_s_rec = st.selectbox("Select Record to Edit (Stock):", s_df['Display'].tolist())
+                sel_s_rec = st.selectbox("Select Record to Edit (Stock):", s_df['Display'].tolist(), key="edit_stock_sel")
                 
                 if sel_s_rec:
                     r_d = s_df[s_df['Display'] == sel_s_rec].iloc[0]
                     st.write("---")
                     e1, e2 = st.columns(2)
-                    n_mat = e1.text_input("Edit Material Name:", value=str(r_d['Material Name']))
-                    n_wt = e2.number_input("Edit Weight (KG):", value=safe_float(r_d.get('Weight (KG)', 0.0)))
+                    n_mat = e1.text_input("Edit Material Name:", value=str(r_d['Material Name']), key="edit_s_mat")
+                    n_wt = e2.number_input("Edit Weight (KG):", value=safe_float(r_d.get('Weight (KG)', 0.0)), key="edit_s_wt")
                     
                     st.write("**Nevi Lumbai Nakho (Keep blank to keep old):**")
                     es1, es2 = st.columns(2)
-                    n_len = es1.text_input("New Length (e.g., 20 ke 20 1/2):", value="")
-                    n_unit = es2.selectbox("New Unit:", ["Foot", "Inch", "MM"])
+                    n_len = es1.text_input("New Length (e.g., 20 ke 20 1/2):", value="", key="edit_s_len")
+                    n_unit = es2.selectbox("New Unit:", ["Foot", "Inch", "MM"], key="edit_s_unit")
                     
                     b1, b2 = st.columns(2)
-                    if b1.button("💾 Update Stock", type="primary"):
+                    if b1.button("💾 Update Stock", type="primary", key="btn_upd_stock"):
                         if n_len:
                             n_val = parse_smart_size(n_len)
                             if n_val > 0:
@@ -815,7 +812,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                                 sheet_stock.update(f"B{i+1}:E{i+1}", [[n_mat, n_total_ft, n_total_mm, n_wt]])
                                 st.success("Updated!"); clear_all_caches(); st.rerun(); break
                                 
-                    if b2.button("❌ Delete Stock"):
+                    if b2.button("❌ Delete Stock", key="btn_del_stock"):
                         all_vals = sheet_stock.get_all_values()
                         for i, r in enumerate(all_vals):
                             if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Material Name']) and str(r[3]) == str(r_d['Total Length (MM)']):
@@ -832,24 +829,24 @@ elif menu == "✂️ Factory Parts & Cutting":
     with tabA:
         st.write("📝 **Record Details:**")
         c01, c02, c03 = st.columns([1, 1, 1])
-        rec_date = c01.date_input("Date Select Karo:", datetime.today())
+        rec_date = c01.date_input("Date Select Karo:", datetime.today(), key="fac_date")
         
         c1, c2 = st.columns(2)
-        raw_sel = c1.selectbox("1. Raw Material (Optional)", ["-- Khali Rakho (Empty) --", "-- New Material --"] + unique_materials)
-        if raw_sel == "-- New Material --": raw_val = c1.text_input("New Material Name:")
+        raw_sel = c1.selectbox("1. Raw Material (Optional)", ["-- Khali Rakho (Empty) --", "-- New Material --"] + unique_materials, key="fac_raw_sel")
+        if raw_sel == "-- New Material --": raw_val = c1.text_input("New Material Name:", key="fac_new_raw")
         elif raw_sel == "-- Khali Rakho (Empty) --": raw_val = "-"
         else: raw_val = raw_sel
             
-        part_sel = c2.selectbox("2. Part Name (Farajiyat)", ["-- New Part --"] + unique_factory_parts)
-        if part_sel == "-- New Part --": part_val = c2.text_input("New Part Name:")
+        part_sel = c2.selectbox("2. Part Name (Farajiyat)", ["-- New Part --"] + unique_factory_parts, key="fac_part_sel")
+        if part_sel == "-- New Part --": part_val = c2.text_input("New Part Name:", key="fac_new_part")
         else: part_val = part_sel
             
         c3, c4, c5 = st.columns([1.5, 1.5, 1])
-        cut_size = c3.text_input("3. Cutting Size")
-        final_size = c4.text_input("4. Final Size (Optional)") 
-        qty = c5.number_input("5. Quantity", min_value=1)
+        cut_size = c3.text_input("3. Cutting Size", key="fac_cut_sz")
+        final_size = c4.text_input("4. Final Size (Optional)", key="fac_fin_sz") 
+        qty = c5.number_input("5. Quantity", min_value=1, key="fac_qty")
         
-        if st.button("💾 Save Cutting Record", type="primary"):
+        if st.button("💾 Save Cutting Record", type="primary", key="btn_save_fac"):
             if not part_val or not cut_size: st.warning("Part Name ane Cutting Size farajiyat (compulsory) che!")
             else:
                 dt_str = rec_date.strftime("%d-%m-%Y")
@@ -859,11 +856,11 @@ elif menu == "✂️ Factory Parts & Cutting":
                 
     with tabB:
         st.write("🔍 **Smart Search & Filters:**")
-        search_kw_factory = st.text_input("Type here to Search (e.g. 20, MS, Stand):", "")
+        search_kw_factory = st.text_input("Type here to Search (e.g. 20, MS, Stand):", "", key="search_fac")
         
         sc1, sc2 = st.columns(2)
-        search_raw = sc1.selectbox("Filter by Material (Optional):", ["-- All Materials --"] + unique_materials)
-        search_part = sc2.selectbox("Filter by Part (Optional):", ["-- All Parts --"] + unique_factory_parts)
+        search_raw = sc1.selectbox("Filter by Material (Optional):", ["-- All Materials --"] + unique_materials, key="search_fac_raw")
+        search_part = sc2.selectbox("Filter by Part (Optional):", ["-- All Parts --"] + unique_factory_parts, key="search_fac_part")
         
         f_df = factory_df.copy()
         if not f_df.empty:
@@ -880,13 +877,13 @@ elif menu == "✂️ Factory Parts & Cutting":
             st.success(f"**Total Quantity: {int(safe_qty)}**")
             
             st.write("---")
-            pdf_format = st.radio("📄 PDF Design Format Select Karo:", ["Aadu (Landscape) - Best for Long Names", "Ubhu (Portrait)"], horizontal=True)
+            pdf_format = st.radio("📄 PDF Design Format Select Karo:", ["Aadu (Landscape) - Best for Long Names", "Ubhu (Portrait)"], horizontal=True, key="fac_pdf_format")
             
             f_pdf = create_factory_pdf(search_raw, search_part, f_df, orientation=pdf_format)
             c1, c2 = st.columns(2)
-            with c1: st.download_button("📥 Download List PDF", data=f_pdf, file_name="Factory_List.pdf", mime="application/pdf", use_container_width=True)
+            with c1: st.download_button("📥 Download List PDF", data=f_pdf, file_name="Factory_List.pdf", mime="application/pdf", use_container_width=True, key="dl_fac_pdf")
             with c2:
-                if st.button("👁️ View Preview", use_container_width=True): display_pdf_in_app(f_pdf)
+                if st.button("👁️ View Preview", use_container_width=True, key="pv_fac_pdf"): display_pdf_in_app(f_pdf)
             
     with tabC:
         if factory_df.empty: st.info("No records.")
@@ -894,28 +891,28 @@ elif menu == "✂️ Factory Parts & Cutting":
             edit_f_df = factory_df.copy()
             edit_f_df['Final Size'] = edit_f_df.get('Final Size', '')
             edit_f_df['Display'] = edit_f_df['Date'].astype(str) + " | " + edit_f_df['Part Name'].astype(str) + " | Cut: " + edit_f_df['Cutting Size'].astype(str)
-            sel_rec = st.selectbox("Select Record:", edit_f_df['Display'].tolist())
+            sel_rec = st.selectbox("Select Record:", edit_f_df['Display'].tolist(), key="edit_fac_sel")
             
             if sel_rec:
                 r_d = edit_f_df[edit_f_df['Display'] == sel_rec].iloc[0]
-                e_d = st.date_input("Edit Date:", safe_date(str(r_d['Date'])))
+                e_d = st.date_input("Edit Date:", safe_date(str(r_d['Date'])), key="edit_fac_date")
                 
                 e1, e2 = st.columns(2)
-                n_raw = e1.text_input("Edit Material:", value=str(r_d['Raw Material']))
-                n_prt = e2.text_input("Edit Part Name:", value=str(r_d['Part Name']))
+                n_raw = e1.text_input("Edit Material:", value=str(r_d['Raw Material']), key="edit_fac_raw")
+                n_prt = e2.text_input("Edit Part Name:", value=str(r_d['Part Name']), key="edit_fac_part")
                 e3, e4, e5 = st.columns([1.5, 1.5, 1])
-                n_cut = e3.text_input("Edit Cutting Size:", value=str(r_d['Cutting Size']))
-                n_final = e4.text_input("Edit Final Size:", value=str(r_d.get('Final Size', '')))
-                n_qty = e5.number_input("Edit Qty:", value=safe_int(r_d.get('Quantity', 1), 1), min_value=1)
+                n_cut = e3.text_input("Edit Cutting Size:", value=str(r_d['Cutting Size']), key="edit_fac_cutsz")
+                n_final = e4.text_input("Edit Final Size:", value=str(r_d.get('Final Size', '')), key="edit_fac_finsz")
+                n_qty = e5.number_input("Edit Qty:", value=safe_int(r_d.get('Quantity', 1), 1), min_value=1, key="edit_fac_qty")
                 
                 b1, b2 = st.columns(2)
-                if b1.button("💾 Update", type="primary"):
+                if b1.button("💾 Update", type="primary", key="btn_upd_fac"):
                     n_dt_str = e_d.strftime("%d-%m-%Y")
                     for i, r in enumerate(sheet_factory.get_all_values()):
                         if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Raw Material']) and r[2] == str(r_d['Part Name']) and str(r[3]) == str(r_d['Cutting Size']):
                             sheet_factory.update(f"A{i+1}:F{i+1}", [[n_dt_str, n_raw, n_prt, n_cut, n_final if n_final else "-", n_qty]])
                             st.success("Updated!"); clear_all_caches(); st.rerun(); break
-                if b2.button("❌ Delete"):
+                if b2.button("❌ Delete", key="btn_del_fac"):
                     for i, r in enumerate(sheet_factory.get_all_values()):
                         if i > 0 and r[0] == str(r_d['Date']) and r[1] == str(r_d['Raw Material']) and r[2] == str(r_d['Part Name']) and str(r[3]) == str(r_d['Cutting Size']):
                             sheet_factory.delete_rows(i+1); st.success("Deleted!"); clear_all_caches(); st.rerun(); break
@@ -925,20 +922,20 @@ elif menu == "✂️ Factory Parts & Cutting":
 # ==========================================
 elif menu == "➕ Add New Entry":
     display_header()
-    party_sel = st.selectbox("Select Party:", ["-- New Party --"] + unique_parties_list, index=0)
-    party_name = st.text_input("Enter New Party Name:") if party_sel == "-- New Party --" else party_sel
+    party_sel = st.selectbox("Select Party:", ["-- New Party --"] + unique_parties_list, index=0, key="add_party_sel")
+    party_name = st.text_input("Enter New Party Name:", key="add_party_new") if party_sel == "-- New Party --" else party_sel
     st.write("---")
-    entry_type = st.radio("What do you want to add?", ["Machine", "Spare Part / Custom Item"], horizontal=True)
+    entry_type = st.radio("What do you want to add?", ["Machine", "Spare Part / Custom Item"], horizontal=True, key="add_entry_type")
     
     if entry_type == "Machine":
         col1, col2, col3 = st.columns(3)
         with col1:
             widths = sorted(list(set([k.split('x')[0] for k in settings['prices'].keys() if 'x' in k])))
-            w_val = st.selectbox("Width", widths if widths else ["0"])
+            w_val = st.selectbox("Width", widths if widths else ["0"], key="add_w")
         with col2:
             lengths = sorted(list(set([k.split('x')[1] for k in settings['prices'].keys() if 'x' in k])))
-            l_val = st.selectbox("Length", lengths if lengths else ["0"])
-        with col3: speed = st.selectbox("Speed", ["Low", "High", "Low+High"])
+            l_val = st.selectbox("Length", lengths if lengths else ["0"], key="add_l")
+        with col3: speed = st.selectbox("Speed", ["Low", "High", "Low+High"], key="add_speed")
 
         size = f"{w_val}x{l_val}"
         st.write("### Add-ons")
@@ -949,7 +946,7 @@ elif menu == "➕ Add New Entry":
             
         for addon_name in settings['addons']:
             if addon_name in ["LowHighExtra"]: continue
-            if cols[col_idx % 3].checkbox(addon_name):
+            if cols[col_idx % 3].checkbox(addon_name, key=f"chk_{addon_name}"):
                 selected_addons.append(addon_name)
                 addons_prices_struct[addon_name] = settings['addons'].get(addon_name, 0)
             col_idx += 1
@@ -959,7 +956,7 @@ elif menu == "➕ Add New Entry":
         else:
             final_total_price = base_machine_price + sum(addons_prices_struct.values())
             st.success(f"**Final Machine Price: Rs. {final_total_price:,.2f}/-**")
-            if st.button("➕ SAVE ENTRY", type="primary"):
+            if st.button("➕ SAVE ENTRY", type="primary", key="btn_add_entry"):
                 if not party_name: st.warning("Please enter Party Name!")
                 else:
                     sheet_main.append_row([st.session_state.q_no, party_name, datetime.now().strftime("%d-%m-%Y"), size, speed, json.dumps(addons_prices_struct), final_total_price])
@@ -969,23 +966,23 @@ elif menu == "➕ Add New Entry":
         st.write("### Add Spare Part Details")
         c1, c2 = st.columns(2)
         with c1:
-            part_sel = st.selectbox("Select Part:", ["-- New Part --"] + unique_parts_list, index=0)
-            part_name = st.text_input("Enter New Part Name:") if part_sel == "-- New Part --" else part_sel
-        with c2: basic_price = st.number_input("Basic Price (Rs)", min_value=0, step=100)
+            part_sel = st.selectbox("Select Part:", ["-- New Part --"] + unique_parts_list, index=0, key="add_sp_sel")
+            part_name = st.text_input("Enter New Part Name:", key="add_sp_new") if part_sel == "-- New Part --" else part_sel
+        with c2: basic_price = st.number_input("Basic Price (Rs)", min_value=0, step=100, key="add_sp_price")
             
         c3, c4, c5 = st.columns([2, 2, 2])
         with c3: 
             hsn_list = ["None"] + sorted(settings.get("hsn_codes", []))
-            hsn_sel = st.selectbox("Select HSN Code:", ["-- Type New --"] + hsn_list)
-            if hsn_sel == "-- Type New --": hsn_val = st.text_input("📝 Type New HSN Code:", value="")
+            hsn_sel = st.selectbox("Select HSN Code:", ["-- Type New --"] + hsn_list, key="add_sp_hsn_sel")
+            if hsn_sel == "-- Type New --": hsn_val = st.text_input("📝 Type New HSN Code:", value="", key="add_sp_hsn_new")
             else: hsn_val = hsn_sel
                 
-        with c4: gst_rate = st.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28])), format_func=lambda x: f"{x}%" if x > 0 else "None (0%)")
+        with c4: gst_rate = st.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28])), format_func=lambda x: f"{x}%" if x > 0 else "None (0%)", key="add_sp_gst")
         with c5:
             final_calc_price = basic_price + (basic_price * gst_rate / 100)
             st.info(f"**Final Price: Rs. {final_calc_price:,.2f}**")
         
-        if st.button("➕ SAVE PART", type="primary"):
+        if st.button("➕ SAVE PART", type="primary", key="btn_add_part"):
             if not party_name or not part_name or final_calc_price <= 0: st.warning("Please enter all details!")
             else:
                 sheet_main.append_row([st.session_state.q_no, party_name, datetime.now().strftime("%d-%m-%Y"), part_name, "Spare Part", json.dumps({"Basic": basic_price, "GST": gst_rate, "HSN": hsn_val}), final_calc_price])
@@ -1000,10 +997,12 @@ elif menu == "📜 Party History & Edit":
     else:
         df = main_df.copy()
         df['Clean_Party'] = df['Party'].astype(str).str.strip().str.title()
-        tab1, tab2, tab3 = st.tabs(["📜 View/Download PDF", "✏️ Edit Record", "❌ Delete Record"])
+        
+        # --- 4 TABS ---
+        tab1, tab2, tab3, tab4 = st.tabs(["📜 View/Download PDF", "✏️ Edit Record", "❌ Delete Record", "📋 Copy/Clone Party"])
         
         with tab1:
-            pdf_party = st.selectbox("Select Party:", ["-- Select Party --"] + unique_parties_list)
+            pdf_party = st.selectbox("Select Party:", ["-- Select Party --"] + unique_parties_list, key="view_party_sel")
             if pdf_party != "-- Select Party --":
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
                 processed_df = prepare_display_df_with_history(party_df)
@@ -1015,62 +1014,135 @@ elif menu == "📜 Party History & Edit":
                 
                 hist_pdf = create_history_pdf(pdf_party, processed_df, "Lifetime Record")
                 c1, c2 = st.columns(2)
-                with c1: st.download_button("📥 Download PDF", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf", use_container_width=True)
+                with c1: st.download_button("📥 Download PDF", data=hist_pdf, file_name=f"{pdf_party}_Record.pdf", mime="application/pdf", use_container_width=True, key="dl_view_pdf")
                 with c2: 
-                    if st.button("👁️ View Preview", use_container_width=True): display_pdf_in_app(hist_pdf)
+                    if st.button("👁️ View Preview", use_container_width=True, key="pv_view_pdf"): display_pdf_in_app(hist_pdf)
 
         with tab2:
-            edit_party = st.selectbox("1. Select Party (Edit):", ["-- Select Party --"] + unique_parties_list)
+            edit_party = st.selectbox("1. Select Party (Edit):", ["-- Select Party --"] + unique_parties_list, key="edit_hist_party")
             if edit_party != "-- Select Party --":
                 party_items = df[df['Clean_Party'] == edit_party].copy()
                 party_items['Display'] = party_items['Date'].astype(str) + " | " + party_items['Size'] + " | Rs. " + party_items['Total_Price'].astype(str)
-                selected_display = st.selectbox("2. Select Item:", party_items['Display'].tolist())
+                selected_display = st.selectbox("2. Select Item:", party_items['Display'].tolist(), key="edit_hist_item")
                 
                 if selected_display:
                     row_data = party_items[party_items['Display'] == selected_display].iloc[0]
                     is_spare = (str(row_data['Speed']) == 'Spare Part')
-                    new_item = st.text_input("Edit Item Name:", value=row_data['Size'])
+                    
+                    st.write("---")
+                    # NEW: Edit Party Name 
+                    new_party_name = st.text_input("Edit Party Name (Transfer to another party):", value=str(row_data['Party']), key="edit_hist_pname")
+                    new_item = st.text_input("Edit Item/Machine Name:", value=row_data['Size'], key="edit_hist_iname")
                     
                     if is_spare:
                         old_basic, old_gst, old_hsn = get_spare_details(row_data.get('Options', '{}'), row_data['Total_Price'])
-                        new_basic = st.number_input("Edit Basic Price:", value=safe_int(old_basic, 0), step=100)
+                        new_basic = st.number_input("Edit Basic Price:", value=safe_int(old_basic, 0), step=100, key="edit_hist_sprice")
                         
                         c1, c2 = st.columns(2)
                         with c1: 
                             hsn_list = ["None"] + sorted(settings.get("hsn_codes", []))
                             if old_hsn and old_hsn not in hsn_list: hsn_list.append(old_hsn)
-                            hsn_sel = st.selectbox("Edit HSN:", ["-- Type New --"] + hsn_list, index=hsn_list.index(old_hsn)+1 if old_hsn in hsn_list else 0)
-                            if hsn_sel == "-- Type New --": new_hsn = st.text_input("📝 Type New HSN Code:", value=old_hsn if old_hsn not in hsn_list else "")
+                            hsn_sel = st.selectbox("Edit HSN:", ["-- Type New --"] + hsn_list, index=hsn_list.index(old_hsn)+1 if old_hsn in hsn_list else 0, key="edit_hist_hsnsel")
+                            if hsn_sel == "-- Type New --": new_hsn = st.text_input("📝 Type New HSN Code:", value=old_hsn if old_hsn not in hsn_list else "", key="edit_hist_hsnnew")
                             else: new_hsn = hsn_sel
                                 
-                        with c2: new_gst = st.selectbox("Edit GST:", [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28])))
+                        with c2: new_gst = st.selectbox("Edit GST:", [0] + sorted(settings.get("gst_rates", [5, 12, 18, 28])), key="edit_hist_gst")
                         new_price = new_basic + (new_basic * new_gst / 100)
-                    else: new_price = st.number_input("Edit Total Price:", value=safe_int(row_data['Total_Price'], 0), step=100)
+                    else: 
+                        new_price = st.number_input("Edit Total Price:", value=safe_int(row_data['Total_Price'], 0), step=100, key="edit_hist_mprice")
                     
-                    if st.button("💾 Update Record", type="primary"):
-                        all_values = sheet_main.get_all_values()
-                        row_index_to_update = -1
-                        for i, r in enumerate(all_values):
-                            if i > 0 and r[1].strip().title() == edit_party and str(r[2]).strip() == str(row_data['Date']).strip() and str(r[3]).strip() == str(row_data['Size']).strip():
-                                row_index_to_update = i + 1; break
-                        if row_index_to_update != -1:
-                            sheet_main.update_cell(row_index_to_update, 4, new_item)
-                            sheet_main.update_cell(row_index_to_update, 7, new_price)
-                            if is_spare: sheet_main.update_cell(row_index_to_update, 6, json.dumps({"Basic": new_basic, "GST": new_gst, "HSN": new_hsn}))
-                            st.success("Updated!"); clear_all_caches(); st.rerun()
+                    if st.button("💾 Update Record", type="primary", key="btn_upd_hist"):
+                        if not new_party_name: st.warning("Party Name cannot be empty!")
+                        else:
+                            all_values = sheet_main.get_all_values()
+                            row_index_to_update = -1
+                            for i, r in enumerate(all_values):
+                                if i > 0 and r[1].strip().title() == edit_party and str(r[2]).strip() == str(row_data['Date']).strip() and str(r[3]).strip() == str(row_data['Size']).strip():
+                                    row_index_to_update = i + 1; break
+                            if row_index_to_update != -1:
+                                sheet_main.update_cell(row_index_to_update, 2, new_party_name) # Update Party Name
+                                sheet_main.update_cell(row_index_to_update, 4, new_item)
+                                sheet_main.update_cell(row_index_to_update, 7, new_price)
+                                if is_spare: sheet_main.update_cell(row_index_to_update, 6, json.dumps({"Basic": new_basic, "GST": new_gst, "HSN": new_hsn}))
+                                st.success("Updated Successfully!"); clear_all_caches(); st.rerun()
 
         with tab3:
-            del_party = st.selectbox("1. Select Party (Delete):", ["-- Select Party --"] + unique_parties_list)
+            del_party = st.selectbox("1. Select Party (Delete):", ["-- Select Party --"] + unique_parties_list, key="del_hist_party")
             if del_party != "-- Select Party --":
                 del_items = df[df['Clean_Party'] == del_party].copy()
                 del_items['Display'] = del_items['Date'].astype(str) + " | " + del_items['Size'] + " | Rs. " + del_items['Total_Price'].astype(str)
-                selected_del = st.selectbox("2. Select Item:", del_items['Display'].tolist())
-                if selected_del and st.button("❌ Delete Permanently", type="primary"):
+                selected_del = st.selectbox("2. Select Item:", del_items['Display'].tolist(), key="del_hist_item")
+                if selected_del and st.button("❌ Delete Permanently", type="primary", key="btn_del_hist"):
                     del_row_data = del_items[del_items['Display'] == selected_del].iloc[0]
                     all_values = sheet_main.get_all_values()
                     for i, r in enumerate(all_values):
                         if i > 0 and r[1].strip().title() == del_party and str(r[2]).strip() == str(del_row_data['Date']).strip() and str(r[3]).strip() == str(del_row_data['Size']).strip():
                             sheet_main.delete_rows(i + 1); st.success("Deleted!"); clear_all_caches(); st.rerun(); break
+                            
+        # --- NEW TAB 4: CLONE / COPY PARTY WITH PERCENTAGE ---
+        with tab4:
+            st.write("### 📋 Copy Entire Party List & Apply % Price Change")
+            clone_from = st.selectbox("1. Select Party to Copy From:", ["-- Select --"] + unique_parties_list, key="clone_from")
+            
+            if clone_from != "-- Select --":
+                party_data = df[df['Clean_Party'] == clone_from].copy()
+                
+                st.write("**2. Select Items/Machines to Clone (Default: All are selected)**")
+                item_displays = (party_data['Date'].astype(str) + " | " + party_data['Size'] + " | Rs." + party_data['Total_Price'].astype(str)).tolist()
+                selected_clone_items = st.multiselect("Remove items you don't want to copy:", item_displays, default=item_displays, key="clone_items")
+                
+                st.write("---")
+                c1, c2 = st.columns(2)
+                pct_change = c1.number_input("3. Percentage Change (+ for Increase, - for Decrease):", value=0.0, step=1.0, key="clone_pct")
+                new_party_target = c2.text_input("4. New Party Name (To save these items):", key="clone_new_party")
+                
+                if st.button("🚀 Clone & Save to New Party", type="primary", key="btn_clone_party"):
+                    if not new_party_target:
+                        st.warning("Please enter a New Party Name!")
+                    elif not selected_clone_items:
+                        st.warning("Please select at least one item to copy!")
+                    else:
+                        new_rows = []
+                        dt_str = datetime.now().strftime("%d-%m-%Y")
+                        
+                        for disp in selected_clone_items:
+                            # Match back to original row
+                            r_d = party_data[(party_data['Date'].astype(str) + " | " + party_data['Size'] + " | Rs." + party_data['Total_Price'].astype(str)) == disp].iloc[0]
+                            
+                            old_total = safe_int(r_d['Total_Price'], 0)
+                            new_total = int(old_total * (1 + (pct_change / 100.0)))
+                            
+                            is_spare = (str(r_d['Speed']) == 'Spare Part')
+                            new_options = str(r_d.get('Options', '{}'))
+                            
+                            if is_spare:
+                                old_basic, old_gst, old_hsn = get_spare_details(r_d.get('Options', '{}'), old_total)
+                                new_basic = int(old_basic * (1 + (pct_change / 100.0)))
+                                new_total = int(new_basic + (new_basic * old_gst / 100.0))
+                                new_options = json.dumps({"Basic": new_basic, "GST": old_gst, "HSN": old_hsn})
+                            else:
+                                try:
+                                    opts_dict = json.loads(new_options)
+                                    for k, v in opts_dict.items():
+                                        opts_dict[k] = int(v * (1 + (pct_change / 100.0)))
+                                    new_options = json.dumps(opts_dict)
+                                except: pass
+
+                            new_rows.append([
+                                st.session_state.q_no, 
+                                new_party_target.strip().title(), 
+                                dt_str, 
+                                r_d['Size'], 
+                                r_d['Speed'], 
+                                new_options, 
+                                new_total
+                            ])
+                        
+                        if new_rows:
+                            sheet_main.append_rows(new_rows)
+                            st.success(f"Successfully cloned {len(new_rows)} items to '{new_party_target}' with {pct_change}% adjustment! ✅")
+                            clear_all_caches()
+                            st.rerun()
 
 # ==========================================
 # 5. PART PRICE FINDER PAGE 
@@ -1081,12 +1153,12 @@ elif menu == "🔍 Part Price Finder":
     else:
         df = main_df.copy(); df['Clean_Party'] = df['Party'].astype(str).str.strip().str.title()
         
-        search_kw_price = st.text_input("🔍 Smart Keyword Search (Type Part Name, Size, Machine e.g., 'Valve', '16x24'):", "")
+        search_kw_price = st.text_input("🔍 Smart Keyword Search (Type Part Name, Size, Machine e.g., 'Valve', '16x24'):", "", key="search_pf")
         
         c1, c2 = st.columns(2)
-        search_party_name = c1.selectbox("Filter by Party (Optional):", ["-- All Parties --"] + unique_parties_list)
+        search_party_name = c1.selectbox("Filter by Party (Optional):", ["-- All Parties --"] + unique_parties_list, key="search_pf_party")
         party_parts = sorted(df[df['Clean_Party'] == search_party_name]['Size'].astype(str).str.strip().unique().tolist()) if search_party_name != "-- All Parties --" else all_items_list
-        search_part_name = c2.selectbox("Filter by Item (Optional):", ["-- All Items --"] + party_parts)
+        search_part_name = c2.selectbox("Filter by Item (Optional):", ["-- All Items --"] + party_parts, key="search_pf_item")
         
         filtered_df = df.copy()
         if search_party_name != "-- All Parties --": filtered_df = filtered_df[filtered_df['Clean_Party'] == search_party_name]
@@ -1109,13 +1181,13 @@ elif menu == "🔍 Part Price Finder":
             
             pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, processed_df)
             c1, c2 = st.columns(2)
-            with c1: st.download_button("📥 Download PDF", data=pdf_buffer, file_name="Search_Result.pdf", mime="application/pdf", use_container_width=True)
+            with c1: st.download_button("📥 Download PDF", data=pdf_buffer, file_name="Search_Result.pdf", mime="application/pdf", use_container_width=True, key="dl_pf_pdf")
             with c2: 
-                if st.button("👁️ View Preview", use_container_width=True): display_pdf_in_app(pdf_buffer)
+                if st.button("👁️ View Preview", use_container_width=True, key="pv_pf_pdf"): display_pdf_in_app(pdf_buffer)
 
 
 # ==========================================
-# NEW: 6. MONTHLY EMAIL REPORTS PAGE
+# 6. MONTHLY EMAIL REPORTS PAGE
 # ==========================================
 elif menu == "📧 Monthly Email Reports":
     display_header()
@@ -1129,14 +1201,14 @@ elif menu == "📧 Monthly Email Reports":
     current_year = datetime.now().year
     years = [str(y) for y in range(current_year - 2, current_year + 3)]
     
-    sel_month = c1.selectbox("Select Month:", months, index=months.index(current_month))
-    sel_year = c2.selectbox("Select Year:", years, index=years.index(str(current_year)))
+    sel_month = c1.selectbox("Select Month:", months, index=months.index(current_month), key="mail_month")
+    sel_year = c2.selectbox("Select Year:", years, index=years.index(str(current_year)), key="mail_year")
     target_str = f"-{sel_month}-{sel_year}" 
     display_month_str = f"{datetime.strptime(sel_month, '%m').strftime('%B')} {sel_year}"
     
     st.write("---")
     
-    if st.button("🚀 Generate & Send Email Now", type="primary"):
+    if st.button("🚀 Generate & Send Email Now", type="primary", key="btn_send_mail"):
         with st.spinner(f"Preparing reports for {display_month_str} and sending email... Please wait."):
             
             pdf_attachments = {}
@@ -1164,7 +1236,6 @@ elif menu == "📧 Monthly Email Reports":
                 if not m_df.empty:
                     processed_m_df = prepare_display_df_with_history(m_df)
                     
-                    # Split into two tables logic
                     machines_df = processed_m_df[processed_m_df['Speed'] != 'Spare Part']
                     parts_df = processed_m_df[processed_m_df['Speed'] == 'Spare Part']
                     
@@ -1192,7 +1263,7 @@ elif menu == "📧 Monthly Email Reports":
 elif menu == "⚙️ Master Settings":
     display_header()
     st.title("Master Settings 🔒")
-    pwd_input = st.text_input("Enter Master Password:", type="password")
+    pwd_input = st.text_input("Enter Master Password:", type="password", key="pwd_master")
     
     if pwd_input != settings.get('password', '1234'):
         if pwd_input: st.error("❌ Incorrect Password!")
@@ -1212,10 +1283,10 @@ elif menu == "⚙️ Master Settings":
                     
         st.write("---")
         c1, c2, c3 = st.columns(3)
-        n_w = c1.text_input("Width (e.g. 24)")
-        n_l = c2.text_input("Length (e.g. 48)")
-        n_p = c3.number_input("Base Price", value=0, step=1000)
-        if st.button("➕ Add New Size") and n_w and n_l and n_p > 0:
+        n_w = c1.text_input("Width (e.g. 24)", key="set_nw")
+        n_l = c2.text_input("Length (e.g. 48)", key="set_nl")
+        n_p = c3.number_input("Base Price", value=0, step=1000, key="set_np")
+        if st.button("➕ Add New Size", key="btn_set_sz") and n_w and n_l and n_p > 0:
             settings['prices'][f"{n_w}x{n_l}"] = n_p; save_settings(settings); st.rerun()
 
     with tab2:
@@ -1232,12 +1303,12 @@ elif menu == "⚙️ Master Settings":
                 addons[name] = cB.number_input("Price", value=price, step=500, key=f"a_{name}", label_visibility="collapsed")
                 if cC.button("❌ Remove", key=f"da_{name}"): del addons[name]; save_settings(settings); st.rerun()
                         
-        if st.button("💾 Save Add-on Changes", type="primary"): save_settings(settings); st.success("Updated!")
+        if st.button("💾 Save Add-on Changes", type="primary", key="btn_set_add_save"): save_settings(settings); st.success("Updated!")
         st.write("---")
         c1, c2 = st.columns(2)
-        new_a = c1.text_input("New Add-on Name")
-        new_p = c2.number_input("Add-on Price", value=0, step=500)
-        if st.button("➕ Add Option") and new_a and new_p > 0:
+        new_a = c1.text_input("New Add-on Name", key="set_na")
+        new_p = c2.number_input("Add-on Price", value=0, step=500, key="set_nap")
+        if st.button("➕ Add Option", key="btn_set_add") and new_a and new_p > 0:
             settings['addons'][new_a] = new_p; save_settings(settings); st.rerun()
                 
     with tab3:
@@ -1248,8 +1319,8 @@ elif menu == "⚙️ Master Settings":
             cA.write(f"**{g}%** GST")
             if cB.button("❌ Remove", key=f"dgst_{g}"): gst_rates.remove(g); settings["gst_rates"] = gst_rates; save_settings(settings); st.rerun()
         st.write("---")
-        n_gst = st.number_input("Add New GST Rate (%)", min_value=1, max_value=100, step=1)
-        if st.button("➕ Add New GST %"):
+        n_gst = st.number_input("Add New GST Rate (%)", min_value=1, max_value=100, step=1, key="set_ngst")
+        if st.button("➕ Add New GST %", key="btn_set_gst"):
             if n_gst not in gst_rates: gst_rates.append(n_gst); gst_rates.sort(); settings["gst_rates"] = gst_rates; save_settings(settings); st.rerun()
 
     with tab4:
@@ -1260,6 +1331,6 @@ elif menu == "⚙️ Master Settings":
             cA.write(f"**{h}**")
             if cB.button("❌ Remove", key=f"dhsn_{h}"): hsn_codes.remove(h); settings["hsn_codes"] = hsn_codes; save_settings(settings); st.rerun()
         st.write("---")
-        n_hsn = st.text_input("Add New HSN Code")
-        if st.button("➕ Add New HSN") and n_hsn:
+        n_hsn = st.text_input("Add New HSN Code", key="set_nhsn")
+        if st.button("➕ Add New HSN", key="btn_set_hsn") and n_hsn:
             if n_hsn not in hsn_codes: hsn_codes.append(n_hsn); hsn_codes.sort(); settings["hsn_codes"] = hsn_codes; save_settings(settings); st.rerun()
