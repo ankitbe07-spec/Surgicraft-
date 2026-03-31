@@ -984,7 +984,8 @@ elif menu == "➕ Add New Entry":
         hsns = c3.selectbox("HSN Code:", ["-- New --"] + hsnl, key="add_sp_hsn_sel")
         hsn_v = c3.text_input("📝 New HSN:", key="add_sp_hsn_new") if hsns == "-- New --" else hsns
         
-        gst_r = c4.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", []))), key="add_sp_gst"
+        # --- THE FIX IS HERE. I HAVE REMOVED THE COMMA AND PLACED IT INSIDE ---
+        gst_r = c4.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", [])), key="add_sp_gst")
         
         final_c = basic_p + (basic_p * gst_r / 100)
         st.info(f"**Final: Rs. {final_c:,.2f}**")
