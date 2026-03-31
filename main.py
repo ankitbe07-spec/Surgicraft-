@@ -356,7 +356,6 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
     end_x = width - 40
     avail_width = end_x - start_x
     
-    # FIXED: Added 'Party': 100 to col_widths to prevent KeyError when Party column is selected
     col_widths = {'Sr. No.': 35, 'Date': 70, 'Party': 100, 'Old Date': 70, 'HSN Code': 60, 'Old Price': 80, 'Final Price': 100}
     
     has_item_details = 'Item Details' in vis_pdf_cols
@@ -431,7 +430,6 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
         text_y = y - 15 
         c.setFont("Helvetica-Bold", 9)
         
-        # --- FIXED PRICING FORMATS FOR PDF ---
         dt_val = str(row['Date']) if str(row['Date']) not in ["-", "nan", ""] else ""
         odt_val = str(row['Old Date']) if str(row['Old Date']) not in ["-", "nan", ""] else ""
         
@@ -985,7 +983,7 @@ elif menu == "➕ Add New Entry":
         hsns = c3.selectbox("HSN Code:", ["-- New --"] + hsnl, key="add_sp_hsn_sel")
         hsn_v = c3.text_input("📝 New HSN:", key="add_sp_hsn_new") if hsns == "-- New --" else hsns
         
-        gst_r = c4.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", []))), key="add_sp_gst"
+        gst_r = c4.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", [])), key="add_sp_gst")
         
         final_c = basic_p + (basic_p * gst_r / 100)
         st.info(f"**Final: Rs. {final_c:,.2f}**")
