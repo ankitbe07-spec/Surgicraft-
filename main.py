@@ -244,7 +244,7 @@ def prepare_display_df_with_history(df):
 
     basics, gsts, hsns = [], [], []
     old_dates, old_prices = [], []
-    full_details, notes = [], []  # FIXED: added second empty list
+    full_details, notes = [], []  
 
     for idx, row in df.iterrows():
         opts = {}
@@ -279,6 +279,9 @@ def prepare_display_df_with_history(df):
     df['GST'] = gsts
     df['Item Details'] = full_details
     df['Note'] = notes 
+    
+    # MAGIC FIX: Copy Total_Price into Final Price so the system finds it without error
+    df['Final Price'] = df['Total_Price']
     
     return df
 
@@ -899,9 +902,8 @@ elif menu == "➕ Add New Entry":
         if not party_hist.empty:
             st.markdown(f"📜 **{party_name} Old Record:**")
             p_hist_proc = prepare_display_df_with_history(party_hist)
-            disp_h = p_hist_proc[['Date', 'Item Details', 'Total_Price']].reset_index(drop=True)
+            disp_h = p_hist_proc[['Date', 'Item Details', 'Final Price']].reset_index(drop=True)
             disp_h.index = range(1, len(disp_h)+1)
-            disp_h.rename(columns={'Total_Price': 'Final Price'}, inplace=True)
             styled_h = disp_h.style.set_properties(subset=['Final Price'], **{'text-align': 'center'})
             st.dataframe(styled_h, use_container_width=True)
             
