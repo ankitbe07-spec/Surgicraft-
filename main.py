@@ -244,7 +244,7 @@ def prepare_display_df_with_history(df):
 
     basics, gsts, hsns = [], [], []
     old_dates, old_prices = [], []
-    full_details, notes = [], []  
+    full_details, notes = [], []
 
     for idx, row in df.iterrows():
         opts = {}
@@ -279,8 +279,6 @@ def prepare_display_df_with_history(df):
     df['GST'] = gsts
     df['Item Details'] = full_details
     df['Note'] = notes 
-    
-    # MAGIC FIX: Copy Total_Price into Final Price so the system finds it without error
     df['Final Price'] = df['Total_Price']
     
     return df
@@ -328,10 +326,15 @@ def draw_grid_lines(c, y_top, y_bot, cols):
     c.line(cols[0], y_bot, cols[-1], y_bot) 
     for col in cols: c.line(col, y_top, col, y_bot) 
 
-def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=True):
+def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=True, orientation="Landscape (આડું)"):
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=landscape(A4))
-    width, height = landscape(A4)
+    if "Portrait" in orientation:
+        pagesize_selected = A4
+    else:
+        pagesize_selected = landscape(A4)
+        
+    width, height = pagesize_selected
+    c = canvas.Canvas(buffer, pagesize=pagesize_selected)
     
     c.setFont("Helvetica-Bold", 14)
     c.drawString(40, height - 40, title_str)
@@ -849,7 +852,7 @@ elif menu == "✂️ Factory Parts & Cutting":
             tqty = pd.to_numeric(f_df['Quantity'], errors='coerce').fillna(0).sum()
             st.success(f"**Total Qty: {int(tqty)}**")
             st.write("---")
-            pdf_fmt = st.radio("PDF Format:", ["Landscape", "Portrait"], horizontal=True, key="fac_pdf_format")
+            pdf_fmt = st.radio("PDF Format:", ["Landscape (આડું)", "Portrait (ઊભું)"], horizontal=True, key="fac_pdf_format")
             f_pdf = create_factory_pdf(search_raw, search_part, f_df, pdf_fmt)
             c1, c2 = st.columns(2)
             with c1: 
@@ -963,7 +966,7 @@ elif menu == "➕ Add New Entry":
         hsns = c3.selectbox("HSN Code:", ["-- New --"] + hsnl, key="add_sp_hsn_sel")
         hsn_v = c3.text_input("📝 New HSN:", key="add_sp_hsn_new") if hsns == "-- New --" else hsns
         
-        gst_r = c4.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", [])), key="add_sp_gst")
+        gst_r = c4.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", []))), key="add_sp_gst"
         
         final_c = basic_p + (basic_p * gst_r / 100)
         st.info(f"**Final: Rs. {final_c:,.2f}**")
@@ -1020,6 +1023,9 @@ elif menu == "📜 Party History & Edit":
                         st.toast("Saved! ✅")
                     
                     st.write("---")
+                    # --- NEW: PDF FORMAT RADIO FOR PARTY HISTORY ---
+                    pdf_fmt_hist = st.radio("📄 PDF Design Format:", ["Landscape (આડું)", "Portrait (ઊભું)"], horizontal=True, key="hist_pdf_format")
+                    
                     col1, col2 = st.columns(2)
                     m_records = p_df[p_df['Speed'] != 'Spare Part']
                     with col1:
@@ -1032,8 +1038,17 @@ elif menu == "📜 Party History & Edit":
                                 st.dataframe(styled_m, use_container_width=True, hide_index=True)
                             else: 
                                 st.dataframe(md, use_container_width=True, hide_index=True)
-                            m_pdf = create_dynamic_pdf(pdf_p, m_records, "HHP Machine Price List (GST Extra) HSN 8419", sel_mach, True)
-                            st.download_button("📥 PDF", data=m_pdf, file_name=f"{pdf_p}_Machines.pdf", use_container_width=True)
+                            
+                            # --- ADDED ORIENTATION PARAMETER ---
+                            m_pdf = create_dynamic_pdf(pdf_p, m_records, "HHP Machine Price List (GST Extra) HSN 8419", sel_mach, True, orientation=pdf_fmt_hist)
+                            
+                            # --- ADDED PREVIEW BUTTON BACK ---
+                            c_dl_m, c_pv_m = st.columns(2)
+                            with c_dl_m:
+                                st.download_button("📥 PDF", data=m_pdf, file_name=f"{pdf_p}_Machines.pdf", use_container_width=True)
+                            with c_pv_m:
+                                if st.button("👁️ Preview", use_container_width=True, key="pv_mach_hist"):
+                                    display_pdf_in_app(m_pdf)
                         else: 
                             st.info("No machines.")
                             
@@ -1048,8 +1063,17 @@ elif menu == "📜 Party History & Edit":
                                 st.dataframe(styled_p, use_container_width=True, hide_index=True)
                             else: 
                                 st.dataframe(pd_d, use_container_width=True, hide_index=True)
-                            p_pdf = create_dynamic_pdf(pdf_p, p_records, "Spare Parts Price List", sel_part, False)
-                            st.download_button("📥 PDF", data=p_pdf, file_name=f"{pdf_p}_Parts.pdf", use_container_width=True)
+                            
+                            # --- ADDED ORIENTATION PARAMETER ---
+                            p_pdf = create_dynamic_pdf(pdf_p, p_records, "Spare Parts Price List", sel_part, False, orientation=pdf_fmt_hist)
+                            
+                            # --- ADDED PREVIEW BUTTON BACK ---
+                            c_dl_p, c_pv_p = st.columns(2)
+                            with c_dl_p:
+                                st.download_button("📥 PDF", data=p_pdf, file_name=f"{pdf_p}_Parts.pdf", use_container_width=True)
+                            with c_pv_p:
+                                if st.button("👁️ Preview", use_container_width=True, key="pv_part_hist"):
+                                    display_pdf_in_app(p_pdf)
                         else: 
                             st.info("No parts.")
 
@@ -1241,7 +1265,11 @@ elif menu == "🔍 Part Price Finder":
             styled_disp = disp_df.style.set_properties(subset=['Final Price'], **{'text-align': 'center'})
             st.dataframe(styled_disp, use_container_width=True)
             
-            p_buf = create_dynamic_pdf(sp if sp!="-- All --" else "Search Result", p_df, "Item / Part Price Report", ['Date', 'Party', 'Item Details', 'Final Price'], False) 
+            # --- ADDED PDF FORMAT OPTION IN PART FINDER TOO ---
+            st.write("---")
+            pdf_fmt_find = st.radio("📄 PDF Design Format:", ["Landscape (આડું)", "Portrait (ઊભું)"], horizontal=True, key="find_pdf_format")
+            
+            p_buf = create_dynamic_pdf(sp if sp!="-- All --" else "Search Result", p_df, "Item / Part Price Report", ['Date', 'Party', 'Item Details', 'Final Price'], False, orientation=pdf_fmt_find) 
             c1, c2 = st.columns(2)
             with c1: 
                 st.download_button("📥 PDF", data=p_buf, file_name="Search_Result.pdf", use_container_width=True, key="dl_pf_pdf")
