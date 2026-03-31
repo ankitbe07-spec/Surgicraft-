@@ -230,6 +230,7 @@ def get_item_details_str(row):
 def prepare_display_df_with_history(df):
     df = df.copy()
     df['DateObj'] = pd.to_datetime(df['Date'], format="%d-%m-%Y", errors='coerce')
+    # Default sort (will be overridden by user selection)
     df = df.sort_values('DateObj', ascending=False)
 
     basics, gsts, hsns = [], [], []
@@ -297,8 +298,12 @@ def mm_to_foot_inch(mm_val):
 
 def display_pdf_in_app(pdf_buffer):
     base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
-    pdf_display = f'''<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="450" type="application/pdf" style="border: 2px solid #ccc; border-radius: 8px;"></iframe>'''
     st.markdown("### 📄 PDF Preview")
+    
+    # --- iPHONE FRIENDLY PREVIEW LINK ---
+    st.markdown(f'<a href="data:application/pdf;base64,{base64_pdf}" target="_blank" download="Surgicraft_Document.pdf" style="display: inline-block; padding: 10px 15px; background-color: #ff4b4b; color: white; border-radius: 5px; text-decoration: none; font-weight: bold; margin-bottom: 10px;">📱 Open PDF (Best for iPhone/Mobile)</a>', unsafe_allow_html=True)
+    
+    pdf_display = f'''<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="450" type="application/pdf" style="border: 2px solid #ccc; border-radius: 8px;"></iframe>'''
     st.markdown(pdf_display, unsafe_allow_html=True)
 
 def draw_grid_lines(c, y_top, y_bot, cols):
@@ -307,11 +312,17 @@ def draw_grid_lines(c, y_top, y_bot, cols):
     c.line(cols[0], y_bot, cols[-1], y_bot) 
     for col in cols: c.line(col, y_top, col, y_bot) 
 
-# --- NEW DYNAMIC PDF FUNCTION ---
-def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=True):
+# --- NEW DYNAMIC PDF FUNCTION (WITH ORIENTATION) ---
+def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=True, orientation="Aadu (Landscape)"):
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=landscape(A4))
-    width, height = landscape(A4)
+    
+    if "Portrait" in orientation:
+        pagesize_selected = A4
+    else:
+        pagesize_selected = landscape(A4)
+        
+    width, height = pagesize_selected
+    c = canvas.Canvas(buffer, pagesize=pagesize_selected)
     
     c.setFont("Helvetica-Bold", 14)
     c.drawString(40, height - 40, title_str)
@@ -326,15 +337,20 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
     y = height - 90
     c.setFont("Helvetica-Bold", 10)
     
-    start_x = 40
-    end_x = width - 40
+    start_x = 30 if "Portrait" in orientation else 40
+    end_x = width - (30 if "Portrait" in orientation else 40)
     avail_width = end_x - start_x
     
-    col_widths = {'Date': 70, 'Old Date': 70, 'HSN Code': 60, 'Old Price': 80, 'Total_Price': 100, 'Party': 120}
+    # Adjust widths dynamically based on orientation
+    if "Portrait" in orientation:
+        col_widths = {'Date': 55, 'Old Date': 55, 'HSN Code': 45, 'Old Price': 60, 'Total_Price': 70, 'Party': 80}
+    else:
+        col_widths = {'Date': 70, 'Old Date': 70, 'HSN Code': 60, 'Old Price': 80, 'Total_Price': 100, 'Party': 120}
+        
     fixed_w = sum([col_widths[col] for col in visible_cols if col in col_widths])
     
     if 'Item Details' in visible_cols:
-        col_widths['Item Details'] = max(100, avail_width - fixed_w)
+        col_widths['Item Details'] = max(80, avail_width - fixed_w)
         
     cols = [start_x]
     for col in visible_cols:
@@ -353,7 +369,6 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
         total_val = row.get('Total_Price', 0)
         total_price = int(total_val) if pd.notna(total_val) else 0
         
-        speed_str = str(row['Speed'])
         opts = {}
         try: opts = json.loads(str(row.get('Options', '{}')))
         except: pass
@@ -1006,6 +1021,7 @@ elif menu == "📜 Party History & Edit":
                 party_df = df[df['Clean_Party'] == pdf_party].copy()
                 processed_df = prepare_display_df_with_history(party_df)
                 
+                # --- NEW SMART SEARCH IN HISTORY ---
                 search_kw_hist = st.text_input("🔍 Smart Keyword Search (Filter by Item, Speed, Size...):", "", key="search_hist_party")
                 if search_kw_hist:
                     mask = processed_df.astype(str).apply(lambda x: x.str.contains(search_kw_hist, case=False, na=False)).any(axis=1)
@@ -1014,6 +1030,24 @@ elif menu == "📜 Party History & Edit":
                 if processed_df.empty:
                     st.warning("No records match your search.")
                 else:
+                    # --- NEW: MASTER SORTING FOR UI AND PDF ---
+                    sort_opt = st.selectbox("Sort By (ગોઠવણી):", ['Date (New to Old)', 'Date (Old to New)', 'Name (A to Z)', 'Name (Z to A)', 'Price (High to Low)', 'Price (Low to High)'], key="sort_opt_hist")
+                    
+                    if sort_opt == 'Date (New to Old)':
+                        processed_df = processed_df.sort_values('DateObj', ascending=False)
+                    elif sort_opt == 'Date (Old to New)':
+                        processed_df = processed_df.sort_values('DateObj', ascending=True)
+                    elif sort_opt == 'Name (A to Z)':
+                        processed_df = processed_df.sort_values('Item Details', ascending=True)
+                    elif sort_opt == 'Name (Z to A)':
+                        processed_df = processed_df.sort_values('Item Details', ascending=False)
+                    elif sort_opt == 'Price (High to Low)':
+                        processed_df['TempPrice'] = pd.to_numeric(processed_df['Total_Price'], errors='coerce')
+                        processed_df = processed_df.sort_values('TempPrice', ascending=False)
+                    elif sort_opt == 'Price (Low to High)':
+                        processed_df['TempPrice'] = pd.to_numeric(processed_df['Total_Price'], errors='coerce')
+                        processed_df = processed_df.sort_values('TempPrice', ascending=True)
+
                     mach_df = processed_df[processed_df['Speed'] != 'Spare Part']
                     part_df = processed_df[processed_df['Speed'] == 'Spare Part']
                     
@@ -1023,7 +1057,6 @@ elif menu == "📜 Party History & Edit":
                     mach_cols_all = ['Date', 'Old Date', 'Item Details', 'Old Price', 'Total_Price']
                     part_cols_all = ['Date', 'Old Date', 'Item Details', 'HSN Code', 'Old Price', 'Total_Price']
                     
-                    # CLEANUP OLD SETTINGS TO PREVENT ERRORS
                     saved_mach = settings.get('vis_mach', mach_cols_all)
                     saved_mach = [c if c != 'New Final Price(Rs)' else 'Total_Price' for c in saved_mach]
                     saved_mach = [c for c in saved_mach if c in mach_cols_all]
@@ -1044,6 +1077,9 @@ elif menu == "📜 Party History & Edit":
                         save_settings_to_sheet(settings)
                         st.toast("Column settings saved! ✅")
                     
+                    # --- NEW: PDF ORIENTATION SELECTION ---
+                    pdf_format_hist = st.radio("📄 PDF Design Format:", ["Aadu (Landscape) - Best for Long Names", "Ubhu (Portrait)"], horizontal=True, key="hist_pdf_format")
+                    
                     st.write("---")
                     col1, col2 = st.columns(2)
                     
@@ -1059,7 +1095,7 @@ elif menu == "📜 Party History & Edit":
                             else:
                                 st.dataframe(mach_disp, use_container_width=True, hide_index=True)
                             
-                            mach_pdf = create_dynamic_pdf(pdf_party, mach_df, "Surgicraft Industries HHP Machine Price List (GST Extra) HSN CODE - 8419", sel_mach, is_machine=True)
+                            mach_pdf = create_dynamic_pdf(pdf_party, mach_df, "Surgicraft Industries HHP Machine Price List (GST Extra) HSN CODE - 8419", sel_mach, is_machine=True, orientation=pdf_format_hist)
                             st.download_button("📥 Download Machine PDF", data=mach_pdf, file_name=f"{pdf_party}_Machines.pdf", mime="application/pdf", use_container_width=True)
                         else:
                             st.info("આ પાર્ટીમાં કોઈ મશીનનો રેકોર્ડ નથી.")
@@ -1076,10 +1112,21 @@ elif menu == "📜 Party History & Edit":
                             else:
                                 st.dataframe(part_disp, use_container_width=True, hide_index=True)
                                 
-                            part_pdf = create_dynamic_pdf(pdf_party, part_df, "Surgicraft Spare Parts Price List", sel_part, is_machine=False)
+                            part_pdf = create_dynamic_pdf(pdf_party, part_df, "Surgicraft Spare Parts Price List", sel_part, is_machine=False, orientation=pdf_format_hist)
                             st.download_button("📥 Download Spare Parts PDF", data=part_pdf, file_name=f"{pdf_party}_Parts.pdf", mime="application/pdf", use_container_width=True)
                         else:
                             st.info("આ પાર્ટીમાં કોઈ સ્પેર-પાર્ટ્સનો રેકોર્ડ નથી.")
+                            
+                    # Show iPhone friendly preview at the bottom if any data exists
+                    if not mach_df.empty or not part_df.empty:
+                        st.write("---")
+                        st.write("### 👁️ Live Preview")
+                        if not mach_df.empty:
+                            with st.expander("Preview Machine PDF"):
+                                display_pdf_in_app(mach_pdf)
+                        if not part_df.empty:
+                            with st.expander("Preview Spare Parts PDF"):
+                                display_pdf_in_app(part_pdf)
 
         with tab2:
             edit_party = st.selectbox("1. Select Party (Edit):", ["-- Select Party --"] + unique_parties_list, key="edit_hist_party")
