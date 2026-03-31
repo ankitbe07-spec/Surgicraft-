@@ -41,7 +41,9 @@ DEF_SETTINGS = {
     },
     "lh_label": "Low+High Speed Extra",
     "gst_rates": [5, 12, 18, 28],
-    "hsn_codes": []
+    "hsn_codes": [],
+    "vis_mach": ['Date', 'Old Date', 'Item Details', 'Old Price', 'New Final Price(Rs)'],
+    "vis_part": ['Date', 'Old Date', 'Item Details', 'HSN Code', 'Old Price', 'New Final Price(Rs)']
 }
 
 if 'q_no' not in st.session_state: st.session_state.q_no = f"SUR/{datetime.now().year}/{datetime.now().strftime('%m%d%H%M')}"
@@ -100,6 +102,8 @@ def load_settings_from_sheet():
             if "gst_rates" not in data: data["gst_rates"] = [5, 12, 18, 28]
             if "hsn_codes" not in data: data["hsn_codes"] = []
             if "lh_label" not in data: data["lh_label"] = "Low+High Speed Extra"
+            if "vis_mach" not in data: data["vis_mach"] = ['Date', 'Old Date', 'Item Details', 'Old Price', 'New Final Price(Rs)']
+            if "vis_part" not in data: data["vis_part"] = ['Date', 'Old Date', 'Item Details', 'HSN Code', 'Old Price', 'New Final Price(Rs)']
             return data
     except: pass
     return DEF_SETTINGS
@@ -132,7 +136,6 @@ except Exception as e:
     st.error(f"Google Sheet Connection Error: {e}")
     st.stop()
 
-# --- THE MISSING DATE FUNCTION IS BACK! ---
 def safe_date(val_str):
     parsed = pd.to_datetime(val_str, format="%d-%m-%Y", errors='coerce')
     if pd.isna(parsed): return datetime.today()
@@ -170,7 +173,6 @@ def get_spare_details(row_options, total_price):
         except: basic = 0
     return basic, gst, hsn
 
-# --- GET RAW FULL NAME FOR EDITING ---
 def get_raw_full_name(row, settings_dict):
     opts = {}
     try: opts = json.loads(str(row.get('Options', '{}')))
@@ -196,19 +198,20 @@ def get_raw_full_name(row, settings_dict):
         base += " + " + " + ".join(addons)
     return base
 
+# --- REMOVED "Machine: " and "Part: " FROM DETAILS ---
 def get_item_details_str(row):
     opts = {}
     try: opts = json.loads(str(row.get('Options', '{}')))
     except: pass
     
     if opts.get('Is_Custom_Name', False):
-        return str(row['Size']) + (" (Part)" if str(row.get('Speed')) == 'Spare Part' else "")
+        return str(row['Size'])
         
     size_formatted = format_size(str(row['Size']))
     speed_str = str(row.get('Speed', ''))
     
     if speed_str == 'Spare Part':
-        return f"{size_formatted} (Part)"
+        return f"{size_formatted}"
         
     res = size_formatted
     if speed_str not in ["-", "", "nan", "-- None --", "None"]:
@@ -304,224 +307,109 @@ def draw_grid_lines(c, y_top, y_bot, cols):
     c.line(cols[0], y_bot, cols[-1], y_bot) 
     for col in cols: c.line(col, y_top, col, y_bot) 
 
-# --- SEPARATE PDF FOR MACHINES ---
-def create_machine_history_pdf(party, records_df):
+# --- NEW DYNAMIC PDF FUNCTION ---
+def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=True):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=landscape(A4))
     width, height = landscape(A4)
     
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(40, height - 40, "Surgicraft Industries HHP Machine Price List (GST Extra) HSN CODE - 8419")
+    c.drawString(40, height - 40, title_str)
     c.setFont("Helvetica-Bold", 11)
     c.drawString(40, height - 60, f"Party Name: {party}")
     c.drawString(width - 150, height - 60, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
+    if not visible_cols: 
+        c.drawString(40, height - 100, "No columns selected for PDF.")
+        c.save(); buffer.seek(0); return buffer
+
     y = height - 90
     c.setFont("Helvetica-Bold", 10)
-    cols = [40, 110, 180, 580, 680, 780] 
     
+    start_x = 40
+    end_x = width - 40
+    avail_width = end_x - start_x
+    
+    col_widths = {'Date': 70, 'Old Date': 70, 'HSN Code': 60, 'Old Price': 80, 'New Final Price(Rs)': 100}
+    fixed_w = sum([col_widths[col] for col in visible_cols if col in col_widths])
+    
+    if 'Item Details' in visible_cols:
+        col_widths['Item Details'] = max(100, avail_width - fixed_w)
+        
+    cols = [start_x]
+    for col in visible_cols:
+        cols.append(cols[-1] + col_widths.get(col, 80))
+        
     row_y_top = y + 20; row_y_bot = y - 5
-    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date")
-    c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
-    c.drawString(cols[2]+5, y+2, "Item Description / Machine Details")
-    c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Old Price")
-    c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "New Final Price")
+    for i, col in enumerate(visible_cols):
+        if col == 'Item Details': c.drawString(cols[i]+5, y+2, "Item Description / Details")
+        elif col == 'New Final Price(Rs)': c.drawCentredString((cols[i]+cols[i+1])/2.0, y+2, "New Final Price")
+        else: c.drawCentredString((cols[i]+cols[i+1])/2.0, y+2, col)
+            
     draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
 
     for index, row in records_df.iterrows():
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
         speed_str = str(row['Speed'])
-        
         opts = {}
         try: opts = json.loads(str(row.get('Options', '{}')))
         except: pass
         
-        needed_height = 30
-        if not opts.get('Is_Custom_Name', False):
+        addons = []
+        if is_machine and not opts.get('Is_Custom_Name', False):
             addons = [k for k,v in opts.items() if k not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra'), 'Custom_Details', 'Is_Custom_Name'] and isinstance(v, (int, float))]
+            
+        needed_height = 25
+        if 'Item Details' in visible_cols and is_machine:
             needed_height += len(addons) * 15
             
         if y - needed_height < 50:
             c.showPage(); y = height - 50; c.setFont("Helvetica-Bold", 10)
             row_y_top = y + 20; row_y_bot = y - 5
-            c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date"); c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
-            c.drawString(cols[2]+5, y+2, "Item Description / Machine Details")
-            c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "Old Price"); c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "New Final Price")
+            for i, col in enumerate(visible_cols):
+                if col == 'Item Details': c.drawString(cols[i]+5, y+2, "Item Description / Details")
+                elif col == 'New Final Price(Rs)': c.drawCentredString((cols[i]+cols[i+1])/2.0, y+2, "New Final Price")
+                else: c.drawCentredString((cols[i]+cols[i+1])/2.0, y+2, col)
             draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
 
         row_y_top = y; text_y = y - 15 
-        
         c.setFont("Helvetica-Bold", 9)
-        dt_val = str(row['Date']) if str(row['Date']) not in ["-", "nan", ""] else ""
-        c.drawCentredString((cols[0]+cols[1])/2.0, text_y, dt_val)
-        odt_val = str(row['Old Date']) if str(row['Old Date']) not in ["-", "nan", ""] else ""
-        c.drawCentredString((cols[1]+cols[2])/2.0, text_y, odt_val)
         
+        dt_val = str(row['Date']) if str(row['Date']) not in ["-", "nan", ""] else ""
+        odt_val = str(row['Old Date']) if str(row['Old Date']) not in ["-", "nan", ""] else ""
         old_price_str = f"{row['Old Price']:,.2f}" if str(row['Old Price']).replace('.','').isdigit() else str(row['Old Price'])
         if old_price_str == "-" or old_price_str == "nan": old_price_str = ""
-        c.drawRightString(cols[4]-5, text_y, old_price_str)
-        c.drawRightString(cols[5]-5, text_y, f"{total_price:,.2f}")
+        new_price_str = f"{total_price:,.2f}"
+        hsn_str = str(row.get('HSN Code', '-'))[:8]
         
-        c.setFont("Helvetica", 9)
-        
-        if opts.get('Is_Custom_Name', False):
-            c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
-            y = text_y - 15
-        else:
-            size_formatted = format_size(str(row['Size']))
-            base_str = f"Machine: {size_formatted}"
-            if speed_str not in ["-", "", "nan", "-- None --", "None"]:
-                base_str += f" {speed_str} Speed"
-            
-            custom_dtl = opts.get('Custom_Details', '')
-            if custom_dtl:
-                base_str += f" + {custom_dtl}"
+        max_drop = 10
+        for i, col in enumerate(visible_cols):
+            mid_x = (cols[i]+cols[i+1])/2.0
+            if col == 'Date': c.drawCentredString(mid_x, text_y, dt_val)
+            elif col == 'Old Date': c.drawCentredString(mid_x, text_y, odt_val)
+            elif col == 'HSN Code': c.drawCentredString(mid_x, text_y, hsn_str)
+            elif col == 'Old Price': c.drawCentredString(mid_x, text_y, old_price_str)
+            # CENTER ALIGNMENT FOR NEW PRICE
+            elif col == 'New Final Price(Rs)': c.drawCentredString(mid_x, text_y, new_price_str) 
+            elif col == 'Item Details':
+                c.setFont("Helvetica", 9)
+                item_str = get_item_details_str(row)
+                if not is_machine and "Basic Price" in row and "GST" in row:
+                    item_str += f" (Basic: Rs.{row['Basic Price']} | GST: {row['GST']})"
                 
-            c.drawString(cols[2]+5, text_y, base_str)
-            
-            temp_y = text_y - 15
-            c.setFont("Helvetica-Oblique", 8)
-            for name, price in opts.items():
-                if name not in ['Basic', 'GST', 'HSN', 'ManualOldDate', 'ManualOldPrice', settings.get('lh_label', 'Low+High Speed Extra'), 'Custom_Details', 'Is_Custom_Name'] and isinstance(price, (int, float)):
-                    c.drawString(cols[2]+15, temp_y, f"• Add-on: {name}"); temp_y -= 15
-            y = temp_y + 5
-
+                c.drawString(cols[i]+5, text_y, item_str)
+                temp_y = text_y - 15
+                c.setFont("Helvetica-Oblique", 8)
+                if is_machine and not opts.get('Is_Custom_Name', False):
+                    for name in addons:
+                        c.drawString(cols[i]+15, temp_y, f"• Add-on: {name}")
+                        temp_y -= 15
+                max_drop = max(max_drop, (text_y - temp_y) + 5)
+                c.setFont("Helvetica-Bold", 9)
+                
+        y = text_y - max_drop
         row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
         
-    c.save(); buffer.seek(0); return buffer
-
-# --- SEPARATE PDF FOR SPARE PARTS ---
-def create_parts_history_pdf(party, records_df):
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=landscape(A4))
-    width, height = landscape(A4)
-    
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(40, height - 40, "Surgicraft Spare Parts Price List")
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(40, height - 60, f"Party Name: {party}")
-    c.drawString(width - 150, height - 60, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
-    
-    y = height - 90
-    c.setFont("Helvetica-Bold", 10)
-    cols = [40, 110, 180, 500, 560, 660, 780] 
-    
-    row_y_top = y + 20; row_y_bot = y - 5
-    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date")
-    c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
-    c.drawString(cols[2]+5, y+2, "Item Description / Details (With Basic/GST)")
-    c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "HSN")
-    c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Old Price")
-    c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "New Final Price")
-    draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
-
-    for index, row in records_df.iterrows():
-        total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
-        needed_height = 20
-            
-        if y - needed_height < 50:
-            c.showPage(); y = height - 50; c.setFont("Helvetica-Bold", 10)
-            row_y_top = y + 20; row_y_bot = y - 5
-            c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date"); c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
-            c.drawString(cols[2]+5, y+2, "Item Description / Details"); c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "HSN")
-            c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Old Price"); c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "New Final Price")
-            draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
-
-        row_y_top = y; text_y = y - 15 
-        
-        c.setFont("Helvetica-Bold", 9)
-        dt_val = str(row['Date']) if str(row['Date']) not in ["-", "nan", ""] else ""
-        c.drawCentredString((cols[0]+cols[1])/2.0, text_y, dt_val)
-        odt_val = str(row['Old Date']) if str(row['Old Date']) not in ["-", "nan", ""] else ""
-        c.drawCentredString((cols[1]+cols[2])/2.0, text_y, odt_val)
-        c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['HSN Code'])[:8])
-        
-        old_price_str = f"{row['Old Price']:,.2f}" if str(row['Old Price']).replace('.','').isdigit() else str(row['Old Price'])
-        if old_price_str == "-" or old_price_str == "nan": old_price_str = ""
-        c.drawRightString(cols[5]-5, text_y, old_price_str)
-        c.drawRightString(cols[6]-5, text_y, f"{total_price:,.2f}")
-        
-        c.setFont("Helvetica", 9)
-        part_str = f"Part: {format_size(str(row['Size']))} (Basic: Rs.{row['Basic Price']} | GST: {row['GST']})"
-        c.drawString(cols[2]+5, text_y, part_str)
-        y = text_y - 5
-
-        row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
-        
-    c.save(); buffer.seek(0); return buffer
-
-def create_part_search_pdf(party_name, part_name, df):
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=landscape(A4))
-    width, height = landscape(A4)
-    
-    c.setFont("Helvetica-Bold", 14); c.drawString(40, height-40, "Surgicraft Item / Part Price Report")
-    c.setFont("Helvetica", 11); c.drawString(40, height-60, f"Party Filter: {party_name}")
-    c.drawString(40, height-75, f"Item Filter: {part_name}"); c.drawString(width-150, height-60, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
-    
-    y = height-110; c.setFont("Helvetica-Bold", 10)
-    cols = [40, 110, 180, 320, 540, 590, 680, 780]
-    
-    row_y_top = y + 20; row_y_bot = y - 5
-    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date"); c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
-    c.drawString(cols[2]+5, y+2, "Party Name"); c.drawString(cols[3]+5, y+2, "Item Details")
-    c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "HSN"); c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "Old Price")
-    c.drawCentredString((cols[6]+cols[7])/2.0, y+2, "New Price")
-    draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
-    
-    for index, row in df.iterrows():
-        total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
-        speed_str = str(row['Speed'])
-        needed_height = 20 if speed_str == "Spare Part" else 25
-        
-        if y - needed_height < 50:
-            c.showPage(); y = height-50; c.setFont("Helvetica-Bold", 10)
-            row_y_top = y+20; row_y_bot = y-5
-            c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "New Date"); c.drawCentredString((cols[1]+cols[2])/2.0, y+2, "Old Date")
-            c.drawString(cols[2]+5, y+2, "Party Name"); c.drawString(cols[3]+5, y+2, "Item Details")
-            c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "HSN"); c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "Old Price")
-            c.drawCentredString((cols[6]+cols[7])/2.0, y+2, "New Price")
-            draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
-
-        row_y_top = y; text_y = y - 15
-        
-        c.setFont("Helvetica-Bold", 9)
-        dt_val = str(row['Date']) if str(row['Date']) not in ["-", "nan", ""] else ""
-        c.drawCentredString((cols[0]+cols[1])/2.0, text_y, dt_val)
-        odt_val = str(row['Old Date']) if str(row['Old Date']) not in ["-", "nan", ""] else ""
-        c.drawCentredString((cols[1]+cols[2])/2.0, text_y, odt_val)
-        
-        c.drawString(cols[2]+5, text_y, str(row['Party'])[:22])
-        c.drawCentredString((cols[4]+cols[5])/2.0, text_y, str(row['HSN Code'])[:8])
-        
-        old_price_str = f"{row['Old Price']:,.2f}" if str(row['Old Price']).replace('.','').isdigit() else str(row['Old Price'])
-        if old_price_str == "-" or old_price_str == "nan": old_price_str = ""
-        c.drawRightString(cols[6]-5, text_y, old_price_str)
-        c.drawRightString(cols[7]-5, text_y, f"{total_price:,.2f}")
-
-        c.setFont("Helvetica", 9)
-        if speed_str == "Spare Part":
-            c.drawString(cols[3]+5, text_y, f"Part: {format_size(str(row['Size']))}")
-            y = text_y - 5
-        else:
-            opts = {}
-            try: opts = json.loads(str(row.get('Options', '{}')))
-            except: pass
-            
-            if opts.get('Is_Custom_Name', False):
-                c.drawString(cols[3]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
-            else:
-                size_formatted = format_size(str(row['Size']))
-                base_str = f"Machine: {size_formatted}"
-                if speed_str not in ["-", "", "nan", "-- None --", "None"]:
-                    base_str += f" {speed_str} Speed"
-                custom_dtl = opts.get('Custom_Details', '')
-                if custom_dtl: base_str += f" + {custom_dtl}"
-                c.drawString(cols[3]+5, text_y, base_str)
-            y = text_y - 15
-            
-        row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
-            
     c.save(); buffer.seek(0); return buffer
 
 def create_factory_pdf(raw_material, search_part, df, orientation="Aadu (Landscape)"):
@@ -623,76 +511,6 @@ def create_hexo_pdf(mat_name, mat_in, mat_out, balance_mm, df):
         c.drawRightString(cols[5]-10, text_y, f"{float(row['Total Used (MM)']):.1f}")
         
         row_y_bot = text_y - 5; draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
-        
-    c.save(); buffer.seek(0); return buffer
-
-def create_all_party_report_pdf(title_str, records_df):
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=landscape(A4))
-    width, height = landscape(A4)
-    
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(40, height - 40, title_str)
-    c.setFont("Helvetica", 10)
-    c.drawString(40, height - 60, f"Report Generated: {datetime.now().strftime('%d-%m-%Y')}")
-    
-    y = height - 90
-    cols = [40, 110, 260, 480, 560, 660, 780] 
-    
-    row_y_top = y + 20; row_y_bot = y - 5
-    c.setFont("Helvetica-Bold", 10)
-    c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date")
-    c.drawString(cols[1]+5, y+2, "Party Name")
-    c.drawString(cols[2]+5, y+2, "Item Description / Details")
-    c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "HSN")
-    c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Type")
-    c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "Final Price")
-    draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
-
-    for index, row in records_df.iterrows():
-        total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
-        speed_str = str(row['Speed'])
-        needed_height = 20 if speed_str == "Spare Part" else 35
-            
-        if y - needed_height < 50:
-            c.showPage(); y = height - 50; c.setFont("Helvetica-Bold", 10)
-            row_y_top = y + 20; row_y_bot = y - 5
-            c.drawCentredString((cols[0]+cols[1])/2.0, y+2, "Date"); c.drawString(cols[1]+5, y+2, "Party Name")
-            c.drawString(cols[2]+5, y+2, "Item Description / Details"); c.drawCentredString((cols[3]+cols[4])/2.0, y+2, "HSN")
-            c.drawCentredString((cols[4]+cols[5])/2.0, y+2, "Type"); c.drawCentredString((cols[5]+cols[6])/2.0, y+2, "Final Price")
-            draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
-
-        row_y_top = y; text_y = y - 15 
-        c.setFont("Helvetica", 9)
-        c.drawCentredString((cols[0]+cols[1])/2.0, text_y, str(row['Date']))
-        c.setFont("Helvetica-Bold", 9); c.drawString(cols[1]+5, text_y, str(row['Party'])[:25]); c.setFont("Helvetica", 9)
-        
-        c.drawCentredString((cols[3]+cols[4])/2.0, text_y, str(row['HSN Code'])[:8])
-        c.drawCentredString((cols[4]+cols[5])/2.0, text_y, "Part" if speed_str == "Spare Part" else "Machine")
-        c.setFont("Helvetica-Bold", 10); c.drawRightString(cols[6]-5, text_y, f"{total_price:,.2f}"); c.setFont("Helvetica", 9)
-        
-        if speed_str == "Spare Part":
-            c.drawString(cols[2]+5, text_y, f"Part: {format_size(str(row['Size']))} (GST: {row['GST']})")
-            y = text_y - 5
-        else:
-            opts = {}
-            try: opts = json.loads(str(row.get('Options', '{}')))
-            except: pass
-            
-            if opts.get('Is_Custom_Name', False):
-                c.drawString(cols[2]+5, text_y, f"Machine: {format_size(str(row['Size']))}")
-            else:
-                size_formatted = format_size(str(row['Size']))
-                base_str = f"Machine: {size_formatted}"
-                if speed_str not in ["-", "", "nan", "-- None --", "None"]:
-                    base_str += f" {speed_str} Speed"
-                custom_dtl = opts.get('Custom_Details', '')
-                if custom_dtl: base_str += f" + {custom_dtl}"
-                c.drawString(cols[2]+5, text_y, base_str)
-                c.setFont("Helvetica-Oblique", 8); c.drawString(cols[2]+15, text_y-15, "Includes Custom Add-ons")
-            y = text_y - 20
-
-        row_y_bot = y; draw_grid_lines(c, row_y_top, row_y_bot, cols)
         
     c.save(); buffer.seek(0); return buffer
 
@@ -888,7 +706,7 @@ if menu == "🪚 Hexo Cutting (Live Stock)":
                 
                 if sel_h_rec:
                     r_d = h_df[h_df['Display'] == sel_h_rec].iloc[0]
-                    k_suf = str(hash(sel_h_rec)).replace("-", "") # Unique key
+                    k_suf = str(hash(sel_h_rec)).replace("-", "") 
                     
                     e1, e2 = st.columns(2)
                     c_mat_index = stock_materials_full.index(str(r_d['Material Name'])) if str(r_d['Material Name']) in stock_materials_full else 0
@@ -1087,7 +905,8 @@ elif menu == "➕ Add New Entry":
             st.markdown(f"📜 **{party_name} નો જૂનો રેકોર્ડ (Double Entry Check):**")
             p_hist_proc = prepare_display_df_with_history(party_hist)
             disp_hist = p_hist_proc[['Date', 'Item Details', 'Total_Price']].rename(columns={'Total_Price': 'Final Price (Rs)'})
-            st.dataframe(disp_hist, use_container_width=True, hide_index=True)
+            styled_hist = disp_hist.style.set_properties(subset=['Final Price (Rs)'], **{'text-align': 'center'})
+            st.dataframe(styled_hist, use_container_width=True, hide_index=True)
             
     st.write("---")
     entry_type = st.radio("What do you want to add?", ["Machine", "Spare Part / Custom Item"], horizontal=True, key="add_entry_type")
@@ -1191,29 +1010,59 @@ elif menu == "📜 Party History & Edit":
                 if processed_df.empty:
                     st.warning("No records match your search.")
                 else:
-                    display_df = processed_df[['Date', 'Old Date', 'Party', 'Item Details', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']].copy()
-                    display_df.rename(columns={'Total_Price': 'New Final Price(Rs)'}, inplace=True)
-                    st.dataframe(display_df, use_container_width=True, hide_index=True)
-                    
                     mach_df = processed_df[processed_df['Speed'] != 'Spare Part']
                     part_df = processed_df[processed_df['Speed'] == 'Spare Part']
                     
                     st.write("---")
-                    c1, c2 = st.columns(2)
+                    st.write("**⚙️ કઈ કોલમ જોવી છે તે સિલેક્ટ કરો (આ સેટિંગ કાયમ માટે સેવ રહેશે):**")
+                    mach_cols_all = ['Date', 'Old Date', 'Item Details', 'Old Price', 'New Final Price(Rs)']
+                    part_cols_all = ['Date', 'Old Date', 'Item Details', 'HSN Code', 'Old Price', 'New Final Price(Rs)']
                     
-                    with c1:
+                    saved_mach = settings.get('vis_mach', mach_cols_all)
+                    saved_part = settings.get('vis_part', part_cols_all)
+                    
+                    c_m, c_p = st.columns(2)
+                    sel_mach = c_m.multiselect("Machine Table Columns:", mach_cols_all, default=saved_mach, key="ms_mach")
+                    sel_part = c_p.multiselect("Spare Parts Table Columns:", part_cols_all, default=saved_part, key="ms_part")
+                    
+                    if set(sel_mach) != set(saved_mach) or set(sel_part) != set(saved_part):
+                        settings['vis_mach'] = sel_mach
+                        settings['vis_part'] = sel_part
+                        save_settings_to_sheet(settings)
+                        st.toast("Column settings saved! ✅")
+                    
+                    st.write("---")
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
                         if not mach_df.empty:
-                            mach_pdf = create_machine_history_pdf(pdf_party, mach_df)
+                            st.write(f"### ⚙️ Machine Records ({len(mach_df)})")
+                            mach_disp = mach_df[sel_mach].copy() if sel_mach else mach_df[['Item Details']].copy()
+                            if 'New Final Price(Rs)' in mach_disp.columns:
+                                mach_disp.rename(columns={'New Final Price(Rs)': 'New Final Price (Rs)'}, inplace=True)
+                                styled_mach = mach_disp.style.set_properties(subset=['New Final Price (Rs)'], **{'text-align': 'center'})
+                                st.dataframe(styled_mach, use_container_width=True, hide_index=True)
+                            else:
+                                st.dataframe(mach_disp, use_container_width=True, hide_index=True)
+                            
+                            mach_pdf = create_dynamic_pdf(pdf_party, mach_df, "Surgicraft Industries HHP Machine Price List (GST Extra) HSN CODE - 8419", sel_mach, is_machine=True)
                             st.download_button("📥 Download Machine PDF", data=mach_pdf, file_name=f"{pdf_party}_Machines.pdf", mime="application/pdf", use_container_width=True)
-                            if st.button("👁️ Preview Machine PDF", use_container_width=True): display_pdf_in_app(mach_pdf)
                         else:
                             st.info("આ પાર્ટીમાં કોઈ મશીનનો રેકોર્ડ નથી.")
                             
-                    with c2:
+                    with col2:
                         if not part_df.empty:
-                            part_pdf = create_parts_history_pdf(pdf_party, part_df)
+                            st.write(f"### 🔧 Spare Parts Records ({len(part_df)})")
+                            part_disp = part_df[sel_part].copy() if sel_part else part_df[['Item Details']].copy()
+                            if 'New Final Price(Rs)' in part_disp.columns:
+                                part_disp.rename(columns={'New Final Price(Rs)': 'New Final Price (Rs)'}, inplace=True)
+                                styled_part = part_disp.style.set_properties(subset=['New Final Price (Rs)'], **{'text-align': 'center'})
+                                st.dataframe(styled_part, use_container_width=True, hide_index=True)
+                            else:
+                                st.dataframe(part_disp, use_container_width=True, hide_index=True)
+                                
+                            part_pdf = create_dynamic_pdf(pdf_party, part_df, "Surgicraft Spare Parts Price List", sel_part, is_machine=False)
                             st.download_button("📥 Download Spare Parts PDF", data=part_pdf, file_name=f"{pdf_party}_Parts.pdf", mime="application/pdf", use_container_width=True)
-                            if st.button("👁️ Preview Spare Parts PDF", use_container_width=True): display_pdf_in_app(part_pdf)
                         else:
                             st.info("આ પાર્ટીમાં કોઈ સ્પેર-પાર્ટ્સનો રેકોર્ડ નથી.")
 
@@ -1235,7 +1084,6 @@ elif menu == "📜 Party History & Edit":
                     eP1, eP2 = st.columns(2)
                     new_party_name = eP1.text_input("Edit Party Name (Transfer):", value=str(row_data['Party']), key=f"edit_hist_pname_{k_suf}")
                     
-                    # --- FULL NAME EDITING ---
                     current_full_name = get_raw_full_name(row_data, settings)
                     new_item = eP2.text_input("Edit Item/Machine Name (આખું નામ બદલવા માટે):", value=current_full_name, key=f"edit_hist_iname_{k_suf}")
                     
@@ -1281,7 +1129,6 @@ elif menu == "📜 Party History & Edit":
                                 opts_dict['ManualOldDate'] = n_old_date.strip() if n_old_date.strip() else "-"
                                 opts_dict['ManualOldPrice'] = n_old_price.strip() if n_old_price.strip() else "-"
                                 
-                                # NAME OVERRIDE LOGIC
                                 size_to_save = new_item.strip()
                                 opts_dict['Is_Custom_Name'] = True
                                 
@@ -1419,14 +1266,14 @@ elif menu == "🔍 Part Price Finder":
             display_df = processed_df[['Date', 'Old Date', 'Party', 'Item Details', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']].copy()
             display_df.rename(columns={'Total_Price': 'New Final Price(Rs)'}, inplace=True)
             
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            styled_disp = display_df.style.set_properties(subset=['New Final Price(Rs)'], **{'text-align': 'center'})
+            st.dataframe(styled_disp, use_container_width=True, hide_index=True)
             
-            pdf_buffer = create_part_search_pdf(search_party_name, search_part_name, processed_df)
+            pdf_buffer = create_dynamic_pdf(search_party_name, processed_df, "Surgicraft Item / Part Price Report", ['Date', 'Party', 'Item Details', 'Old Price', 'New Final Price(Rs)'], is_machine=False)
             c1, c2 = st.columns(2)
             with c1: st.download_button("📥 Download PDF", data=pdf_buffer, file_name="Search_Result.pdf", mime="application/pdf", use_container_width=True, key="dl_pf_pdf")
             with c2: 
                 if st.button("👁️ View Preview", use_container_width=True, key="pv_pf_pdf"): display_pdf_in_app(pdf_buffer)
-
 
 # ==========================================
 # 6. MONTHLY EMAIL REPORTS PAGE
@@ -1480,11 +1327,11 @@ elif menu == "📧 Monthly Email Reports":
                     
                     if not machines_df.empty:
                         title_machine = f"Surgicraft Monthly Machine Party Detail ({display_month_str})"
-                        pdf_attachments[f"Machine_Sales_Report_{display_month_str}.pdf"] = create_all_party_report_pdf(title_machine, machines_df)
+                        pdf_attachments[f"Machine_Sales_Report_{display_month_str}.pdf"] = create_dynamic_pdf(title_machine, machines_df, title_machine, settings.get('vis_mach', ['Date', 'Party', 'Item Details', 'Old Price', 'New Final Price(Rs)']), is_machine=True)
                         
                     if not parts_df.empty:
                         title_parts = f"Surgicraft Monthly Parts Party Detail ({display_month_str})"
-                        pdf_attachments[f"Spare_Parts_Sales_Report_{display_month_str}.pdf"] = create_all_party_report_pdf(title_parts, parts_df)
+                        pdf_attachments[f"Spare_Parts_Sales_Report_{display_month_str}.pdf"] = create_dynamic_pdf(title_parts, parts_df, title_parts, settings.get('vis_part', ['Date', 'Party', 'Item Details', 'HSN Code', 'Old Price', 'New Final Price(Rs)']), is_machine=False)
             
             if not pdf_attachments:
                 st.warning(f"No records found for {display_month_str}. Nothing to email.")
@@ -1532,7 +1379,6 @@ elif menu == "⚙️ Master Settings":
         st.subheader("Edit/Remove Add-ons")
         addons = settings['addons']
         
-        # --- NEW LOGIC: EDIT BOTH SPECIAL LABEL NAME AND PRICE ---
         lh_label = settings.get('lh_label', 'Low+High Speed Extra')
         lh_price = settings['addons'].get(lh_label, 0)
         
