@@ -28,7 +28,6 @@ st.markdown("""
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 """, unsafe_allow_html=True)
 
-# --- RENAMED PRICE COLUMNS IN SETTINGS DEFAULTS ---
 DEF_SETTINGS = {
     "password": "1234",
     "prices": {
@@ -961,7 +960,10 @@ elif menu == "➕ Add New Entry":
         hsnl = ["None"] + sorted(settings.get("hsn_codes", []))
         hsns = c3.selectbox("HSN Code:", ["-- New --"] + hsnl, key="add_sp_hsn_sel")
         hsn_v = c3.text_input("📝 New HSN:", key="add_sp_hsn_new") if hsns == "-- New --" else hsns
-        gst_r = c4.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", []))), key="add_sp_gst"
+        
+        # --- FIXED THE SYNTAX ERROR HERE ---
+        gst_r = c4.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", [])), key="add_sp_gst")
+        
         final_c = basic_p + (basic_p * gst_r / 100)
         st.info(f"**Final: Rs. {final_c:,.2f}**")
         
