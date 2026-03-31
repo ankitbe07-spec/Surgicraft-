@@ -329,8 +329,12 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
     c.setFont("Helvetica-Bold", 11); c.drawString(40, height - 60, f"Party Name: {party}")
     c.drawString(width - 150, height - 60, f"Date: {datetime.now().strftime('%d-%m-%Y')}")
     
+    if not visible_cols: 
+        c.drawString(40, height - 100, "No columns selected for PDF.")
+        c.save(); buffer.seek(0); return buffer
+
     # Internal list: Force 'Sr. No.' at start
-    vis_pdf_cols = ['Sr. No.'] + [c for c in visible_cols if c != 'Sr. No.']
+    vis_pdf_cols = ['Sr. No.'] + [col for col in visible_cols if col != 'Sr. No.']
     
     y = height - 90; c.setFont("Helvetica-Bold", 10)
     start_x = 40; end_x = width - 40; avail_width = end_x - start_x
@@ -364,7 +368,7 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
     draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
 
     # Counters
-     enum_counter = 1
+    enum_counter = 1
     
     for index, row in records_df.iterrows():
         total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
@@ -695,7 +699,7 @@ elif menu == "✂️ Factory Parts & Cutting":
                 e3, e4, e5 = st.columns([1.5, 1.5, 1]); n_cut = e3.text_input("Cut Size:", value=str(r_d['Cutting Size']), key=f"ef_cut_{ks}"); n_fin = e4.text_input("Final Size:", value=str(r_d.get('Final Size', '')), key=f"ef_fin_{ks}"); n_qty = e5.number_input("Qty:", value=safe_int(r_d.get('Quantity', 1), 1), min_value=1, key=f"ef_qty_{ks}")
                 b1, b2 = st.columns(2)
                 if b1.button("💾 Update", key=f"btn_upd_f_{ks}"):
-                    sheet_factory.delete_rows(factory_df[factory_df.index == r_d.name].index[0]+2) # Delete old based on original index
+                    sheet_factory.delete_rows(factory_df[factory_df.index == r_d.name].index[0]+2) 
                     sheet_factory.append_row([e_d.strftime("%d-%m-%Y"), n_raw, n_prt, n_cut, n_fin if n_fin else "-", n_qty]); st.success("Updated!"); clear_all_caches(); st.rerun()
                 if b2.button("❌ Delete", key=f"btn_del_f_{ks}"):
                     sheet_factory.delete_rows(factory_df[factory_df.index == r_d.name].index[0]+2); st.success("Deleted!"); clear_all_caches(); st.rerun()
@@ -713,11 +717,11 @@ elif menu == "➕ Add New Entry":
         if not party_hist.empty:
             st.markdown(f"📜 **{party_name} Old Record:**")
             p_hist_proc = prepare_display_df_with_history(party_hist)
-            # PROPER INDEX AND STYLING
+            # DYNAMIC INDEX FOR HISTORY TABLE
             disp_h = p_hist_proc[['Date', 'Item Details', 'Total_Price']].reset_index(drop=True)
             disp_h.index = range(1, len(disp_h)+1)
-            disp_h.rename(columns={'Total_Price': 'Final Price (Rs)'}, inplace=True)
-            styled_h = disp_h.style.set_properties(subset=['Final Price (Rs)'], **{'text-align': 'center'})
+            disp_h.rename(columns={'Total_Price': 'Final Price'}, inplace=True) # RENAMED
+            styled_h = disp_h.style.set_properties(subset=['Final Price'], **{'text-align': 'center'})
             st.dataframe(styled_h, use_container_width=True)
             
     st.write("---"); entry_type = st.radio("Add What?", ["Machine", "Spare Part / Custom"], horizontal=True, key="add_entry_type")
@@ -807,7 +811,7 @@ elif menu == "📜 Party History & Edit":
                     with col1:
                         if not m_records.empty:
                             st.write(f"### ⚙️ Machine Records ({len(m_records)})")
-                            # --- PROPER DYNAMIC INDEX ON SCREEN ---
+                            # --- DYNAMIC INDEX ---
                             md = m_records[sel_mach].copy() if sel_mach else pd.DataFrame(); md.insert(0, 'Sr.', range(1, len(md)+1))
                             if 'Final Price' in md.columns: styled_m = md.style.set_properties(subset=['Final Price'], **{'text-align': 'center'}); st.dataframe(styled_m, use_container_width=True, hide_index=True)
                             else: st.dataframe(md, use_container_width=True, hide_index=True)
@@ -818,7 +822,7 @@ elif menu == "📜 Party History & Edit":
                     with col2:
                         if not p_records.empty:
                             st.write(f"### 🔧 Spare Parts Records ({len(p_records)})")
-                            # --- PROPER DYNAMIC INDEX ON SCREEN ---
+                            # --- DYNAMIC INDEX ---
                             pd_d = p_records[sel_part].copy() if sel_part else pd.DataFrame(); pd_d.insert(0, 'Sr.', range(1, len(pd_d)+1))
                             if 'Final Price' in pd_d.columns: styled_p = pd_d.style.set_properties(subset=['Final Price'], **{'text-align': 'center'}); st.dataframe(styled_p, use_container_width=True, hide_index=True)
                             else: st.dataframe(pd_d, use_container_width=True, hide_index=True)
@@ -835,12 +839,10 @@ elif menu == "📜 Party History & Edit":
                     r_d = p_items[p_items['Display'] == sel_i].iloc[0]; is_sp = (str(r_d['Speed']) == 'Spare Part'); ks = str(hash(sel_i)); st.write("---")
                     e1, e2 = st.columns(2); n_pn = e1.text_input("Party (Transfer):", value=str(r_d['Party']), key=f"eh_pname_{ks}")
                     n_item = e2.text_input("Item Name (Edit Full):", value=get_raw_full_name(r_d, settings), key=f"eh_iname_{ks}")
-                    opts_d = {}; try: opts_d = json.loads(str(row_data.get('Options', '{}'))) except: pass
+                    opts_d = {}; try: opts_d = json.loads(str(r_d.get('Options', '{}'))) except: pass
                     st.write("**Date/Price:**"); d1, d2 = st.columns(2)
                     n_nd = d1.text_input("New Date:", value=str(r_d['Date']), key=f"eh_nd_{ks}"); n_od = d2.text_input("Old Date:", value=str(r_d.get('Old Date','-')), key=f"eh_od_{ks}")
                     d3, d4 = st.columns(2); n_op = d3.text_input("Old Price:", value=str(r_d.get('Old Price','')), key=f"eh_op_{ks}")
-                    
-                    # --- EDIT NOTE ---
                     n_note = st.text_area("🗒️ Note / Remarks:", value=opts_d.get('General_Note', ''), key=f"eh_note_{ks}")
                     
                     if is_sp:
@@ -856,13 +858,9 @@ elif menu == "📜 Party History & Edit":
                         if not n_pn: st.warning("Party compulsory!"); st.stop()
                         opts_d['ManualOldDate'] = n_od.strip() if n_od.strip() else "-"; opts_d['ManualOldPrice'] = n_op.strip() if n_op.strip() else "-"; opts_d['Is_Custom_Name'] = True
                         if is_sp: opts_d['HSN'] = n_hsn if n_hsn and n_hsn!="None" else "-"; opts_d['Basic'] = n_basic; opts_d['GST'] = n_gst
-                        
-                        # Save edited note back to options
                         if n_note.strip(): opts_d["General_Note"] = n_note.strip()
-                        elif "General_Note" in opts_d: del opts_d["General_Note"] # Clear if empty
-
-                        all_vals = sheet_main.get_all_values()
-                        for i, r in enumerate(all_vals):
+                        elif "General_Note" in opts_d: del opts_d["General_Note"] 
+                        for i, r in enumerate(sheet_main.get_all_values()):
                             if i > 0 and r[1].strip().title() == edit_p and str(r[2]).strip() == str(r_d['Date']).strip() and str(r[3]).strip() == str(r_d['Size']).strip():
                                 ridx = i + 1; sheet_main.update_cell(ridx, 2, n_pn.strip().title()); sheet_main.update_cell(ridx, 3, n_nd.strip() if n_nd.strip() else "-"); sheet_main.update_cell(ridx, 4, n_item.strip()); sheet_main.update_cell(ridx, 6, json.dumps(opts_d)); sheet_main.update_cell(ridx, 7, n_price); st.success("Updated!"); clear_all_caches(); st.rerun(); break
 
@@ -872,8 +870,8 @@ elif menu == "📜 Party History & Edit":
                 del_items = prepare_display_df_with_history(df[df['Clean_Party'] == del_p]); del_items['Display'] = del_items.apply(make_full_display_name, axis=1)
                 sel_del = st.selectbox("Select Item:", del_items['Display'].tolist(), key="del_hist_item")
                 if sel_del and st.button("❌ Delete Permanently", type="primary", key="btn_del_hist"):
-                    del_row = del_items[del_items['Display'] == sel_del].iloc[0]; all_vals = sheet_main.get_all_values()
-                    for i, r in enumerate(all_vals):
+                    del_row = del_items[del_items['Display'] == sel_del].iloc[0]
+                    for i, r in enumerate(sheet_main.get_all_values()):
                         if i > 0 and r[1].strip().title() == del_p and str(r[2]).strip() == str(del_row['Date']).strip() and str(r[3]).strip() == str(del_row['Size']).strip():
                             sheet_main.delete_rows(i + 1); st.success("Deleted!"); clear_all_caches(); st.rerun(); break
                             
@@ -890,14 +888,13 @@ elif menu == "📜 Party History & Edit":
                     if not npt or not sel_cls: st.warning("Enter Name & Select Items!"); st.stop()
                     n_rows, dt_s = [], datetime.now().strftime("%d-%m-%Y")
                     for d in sel_cls:
-                        r_d = p_data[p_data['Display'] == d].iloc[0]; ot = safe_int(r_d['Total_Price'], 0); is_sp = (str(r_d['Speed']) == 'Spare Part')
-                        n_opt = str(r_d.get('Options', '{}')); n_ttl = int(ot * (1 + (pct / 100.0)))
+                        r_d = p_data[p_data['Display'] == d].iloc[0]; ot = safe_int(r_d['Total_Price'], 0); is_sp = (str(r_d['Speed']) == 'Spare Part'); n_opt = str(r_d.get('Options', '{}')); n_ttl = int(ot * (1 + (pct / 100.0)))
                         if is_sp:
-                            ob, og, oh = get_spare_details(r_d.get('Options', '{}'), ot); nb = int(ob * (1 + (pct / 100.0))); n_ttl = int(nb + (nb * og / 100.0))
-                            opts_d = {"Basic": nb, "GST": og, "HSN": oh}
-                            # Copy note if exists
-                            old_opts = {}; try: old_opts = json.loads(str(r_d.get('Options','{}'))) except: pass
-                            if "General_Note" in old_opts: opts_d["General_Note"] = old_opts["General_Note"]
+                            ob, og, oh = get_spare_details(r_d.get('Options', '{}'), ot); nb = int(ob * (1 + (pct / 100.0))); n_ttl = int(nb + (nb * og / 100.0)); opts_d = {"Basic": nb, "GST": og, "HSN": oh}
+                            try:
+                                old_opts = json.loads(str(r_d.get('Options','{}')))
+                                if "General_Note" in old_opts: opts_d["General_Note"] = old_opts["General_Note"]
+                            except: pass
                             n_opt = json.dumps(opts_d)
                         else:
                             try:
@@ -929,12 +926,11 @@ elif menu == "🔍 Part Price Finder":
         elif sp == "-- All --" and si == "-- All --" and not skw: st.info("Select filters to search.")
         else:
             p_df = prepare_display_df_with_history(f_df)
-            # PROPER DYNAMIC INDEX ON SCREEN
-            disp_df = p_df[['Date', 'Party', 'Item Details', 'HSN Code', 'Final Price']].reset_index(drop=True) # RENAMED
+            disp_df = p_df[['Date', 'Party', 'Item Details', 'HSN Code', 'Final Price']].reset_index(drop=True)
             disp_df.index = range(1, len(disp_df)+1)
-            styled_disp = disp_df.style.set_properties(subset=['Final Price'], **{'text-align': 'center'}) # RENAMED/CENTERED
+            styled_disp = disp_df.style.set_properties(subset=['Final Price'], **{'text-align': 'center'})
             st.dataframe(styled_disp, use_container_width=True)
-            p_buf = create_dynamic_pdf(sp if sp!="-- All --" else "Search Result", p_df, "Item / Part Price Report", ['Date', 'Party', 'Item Details', 'Final Price'], False) # RENAMED
+            p_buf = create_dynamic_pdf(sp if sp!="-- All --" else "Search Result", p_df, "Item / Part Price Report", ['Date', 'Party', 'Item Details', 'Final Price'], False) 
             c1, c2 = st.columns(2)
             with c1: st.download_button("📥 PDF", data=p_buf, file_name="Search_Result.pdf", use_container_width=True, key="dl_pf_pdf")
             with c2: 
@@ -965,9 +961,8 @@ elif menu == "📧 Monthly Email Reports":
                 m_df = m_df[m_df['Date'].astype(str).str.endswith(tstr)]
                 if not m_df.empty:
                     p_m_df = prepare_display_df_with_history(m_df); machines_df = p_m_df[p_m_df['Speed'] != 'Spare Part']; parts_df = p_m_df[p_m_df['Speed'] == 'Spare Part']
-                    # Dynamic columns for email pdfs based on settings
-                    v_mach = settings.get('vis_mach', ['Date','Party','Item Details','Final Price'])
-                    v_part = settings.get('vis_part', ['Date','Party','Item Details','Final Price'])
+                    v_mach = settings.get('vis_mach', ['Date','Item Details','Final Price'])
+                    v_part = settings.get('vis_part', ['Date','HSN Code','Final Price'])
                     if not machines_df.empty: pdf_atts[f"Machines_{dmstr}.pdf"] = create_dynamic_pdf(dmstr, machines_df, f"Monthly Machines Detail ({dmstr})", v_mach, True)
                     if not parts_df.empty: pdf_atts[f"Parts_{dmstr}.pdf"] = create_dynamic_pdf(dmstr, parts_df, f"Monthly Parts Detail ({dmstr})", v_part, False)
             if not pdf_atts: st.warning("No records found."); st.stop()
