@@ -42,8 +42,8 @@ DEF_SETTINGS = {
     "lh_label": "Low+High Speed Extra",
     "gst_rates": [5, 12, 18, 28],
     "hsn_codes": [],
-    "vis_mach": ['Date', 'Old Date', 'Item Details', 'Old Price', 'New Final Price(Rs)'],
-    "vis_part": ['Date', 'Old Date', 'Item Details', 'HSN Code', 'Old Price', 'New Final Price(Rs)']
+    "vis_mach": ['Date', 'Old Date', 'Item Details', 'Old Price', 'Total_Price'],
+    "vis_part": ['Date', 'Old Date', 'Item Details', 'HSN Code', 'Old Price', 'Total_Price']
 }
 
 if 'q_no' not in st.session_state: st.session_state.q_no = f"SUR/{datetime.now().year}/{datetime.now().strftime('%m%d%H%M')}"
@@ -102,8 +102,8 @@ def load_settings_from_sheet():
             if "gst_rates" not in data: data["gst_rates"] = [5, 12, 18, 28]
             if "hsn_codes" not in data: data["hsn_codes"] = []
             if "lh_label" not in data: data["lh_label"] = "Low+High Speed Extra"
-            if "vis_mach" not in data: data["vis_mach"] = ['Date', 'Old Date', 'Item Details', 'Old Price', 'New Final Price(Rs)']
-            if "vis_part" not in data: data["vis_part"] = ['Date', 'Old Date', 'Item Details', 'HSN Code', 'Old Price', 'New Final Price(Rs)']
+            if "vis_mach" not in data: data["vis_mach"] = ['Date', 'Old Date', 'Item Details', 'Old Price', 'Total_Price']
+            if "vis_part" not in data: data["vis_part"] = ['Date', 'Old Date', 'Item Details', 'HSN Code', 'Old Price', 'Total_Price']
             return data
     except: pass
     return DEF_SETTINGS
@@ -330,7 +330,7 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
     end_x = width - 40
     avail_width = end_x - start_x
     
-    col_widths = {'Date': 70, 'Old Date': 70, 'HSN Code': 60, 'Old Price': 80, 'New Final Price(Rs)': 100}
+    col_widths = {'Date': 70, 'Old Date': 70, 'HSN Code': 60, 'Old Price': 80, 'Total_Price': 100, 'Party': 120}
     fixed_w = sum([col_widths[col] for col in visible_cols if col in col_widths])
     
     if 'Item Details' in visible_cols:
@@ -343,13 +343,16 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
     row_y_top = y + 20; row_y_bot = y - 5
     for i, col in enumerate(visible_cols):
         if col == 'Item Details': c.drawString(cols[i]+5, y+2, "Item Description / Details")
-        elif col == 'New Final Price(Rs)': c.drawCentredString((cols[i]+cols[i+1])/2.0, y+2, "New Final Price")
+        elif col == 'Total_Price': c.drawCentredString((cols[i]+cols[i+1])/2.0, y+2, "New Final Price (Rs)")
+        elif col == 'Party': c.drawString(cols[i]+5, y+2, "Party Name")
         else: c.drawCentredString((cols[i]+cols[i+1])/2.0, y+2, col)
             
     draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
 
     for index, row in records_df.iterrows():
-        total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
+        total_val = row.get('Total_Price', 0)
+        total_price = int(total_val) if pd.notna(total_val) else 0
+        
         speed_str = str(row['Speed'])
         opts = {}
         try: opts = json.loads(str(row.get('Options', '{}')))
@@ -368,7 +371,8 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
             row_y_top = y + 20; row_y_bot = y - 5
             for i, col in enumerate(visible_cols):
                 if col == 'Item Details': c.drawString(cols[i]+5, y+2, "Item Description / Details")
-                elif col == 'New Final Price(Rs)': c.drawCentredString((cols[i]+cols[i+1])/2.0, y+2, "New Final Price")
+                elif col == 'Total_Price': c.drawCentredString((cols[i]+cols[i+1])/2.0, y+2, "New Final Price (Rs)")
+                elif col == 'Party': c.drawString(cols[i]+5, y+2, "Party Name")
                 else: c.drawCentredString((cols[i]+cols[i+1])/2.0, y+2, col)
             draw_grid_lines(c, row_y_top, row_y_bot, cols); y = row_y_bot
 
@@ -389,8 +393,8 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
             elif col == 'Old Date': c.drawCentredString(mid_x, text_y, odt_val)
             elif col == 'HSN Code': c.drawCentredString(mid_x, text_y, hsn_str)
             elif col == 'Old Price': c.drawCentredString(mid_x, text_y, old_price_str)
-            # CENTER ALIGNMENT FOR NEW PRICE
-            elif col == 'New Final Price(Rs)': c.drawCentredString(mid_x, text_y, new_price_str) 
+            elif col == 'Total_Price': c.drawCentredString(mid_x, text_y, new_price_str) 
+            elif col == 'Party': c.drawString(cols[i]+5, text_y, str(row.get('Party', ''))[:22])
             elif col == 'Item Details':
                 c.setFont("Helvetica", 9)
                 item_str = get_item_details_str(row)
@@ -1015,15 +1019,24 @@ elif menu == "📜 Party History & Edit":
                     
                     st.write("---")
                     st.write("**⚙️ કઈ કોલમ જોવી છે તે સિલેક્ટ કરો (આ સેટિંગ કાયમ માટે સેવ રહેશે):**")
-                    mach_cols_all = ['Date', 'Old Date', 'Item Details', 'Old Price', 'New Final Price(Rs)']
-                    part_cols_all = ['Date', 'Old Date', 'Item Details', 'HSN Code', 'Old Price', 'New Final Price(Rs)']
                     
+                    mach_cols_all = ['Date', 'Old Date', 'Item Details', 'Old Price', 'Total_Price']
+                    part_cols_all = ['Date', 'Old Date', 'Item Details', 'HSN Code', 'Old Price', 'Total_Price']
+                    
+                    # CLEANUP OLD SETTINGS TO PREVENT ERRORS
                     saved_mach = settings.get('vis_mach', mach_cols_all)
+                    saved_mach = [c if c != 'New Final Price(Rs)' else 'Total_Price' for c in saved_mach]
+                    saved_mach = [c for c in saved_mach if c in mach_cols_all]
+                    if not saved_mach: saved_mach = mach_cols_all
+
                     saved_part = settings.get('vis_part', part_cols_all)
+                    saved_part = [c if c != 'New Final Price(Rs)' else 'Total_Price' for c in saved_part]
+                    saved_part = [c for c in saved_part if c in part_cols_all]
+                    if not saved_part: saved_part = part_cols_all
                     
                     c_m, c_p = st.columns(2)
-                    sel_mach = c_m.multiselect("Machine Table Columns:", mach_cols_all, default=saved_mach, key="ms_mach")
-                    sel_part = c_p.multiselect("Spare Parts Table Columns:", part_cols_all, default=saved_part, key="ms_part")
+                    sel_mach = c_m.multiselect("Machine Table Columns:", mach_cols_all, default=saved_mach, format_func=lambda x: "New Final Price (Rs)" if x == "Total_Price" else x, key="ms_mach")
+                    sel_part = c_p.multiselect("Spare Parts Table Columns:", part_cols_all, default=saved_part, format_func=lambda x: "New Final Price (Rs)" if x == "Total_Price" else x, key="ms_part")
                     
                     if set(sel_mach) != set(saved_mach) or set(sel_part) != set(saved_part):
                         settings['vis_mach'] = sel_mach
@@ -1038,8 +1051,9 @@ elif menu == "📜 Party History & Edit":
                         if not mach_df.empty:
                             st.write(f"### ⚙️ Machine Records ({len(mach_df)})")
                             mach_disp = mach_df[sel_mach].copy() if sel_mach else mach_df[['Item Details']].copy()
-                            if 'New Final Price(Rs)' in mach_disp.columns:
-                                mach_disp.rename(columns={'New Final Price(Rs)': 'New Final Price (Rs)'}, inplace=True)
+                            
+                            if 'Total_Price' in mach_disp.columns:
+                                mach_disp.rename(columns={'Total_Price': 'New Final Price (Rs)'}, inplace=True)
                                 styled_mach = mach_disp.style.set_properties(subset=['New Final Price (Rs)'], **{'text-align': 'center'})
                                 st.dataframe(styled_mach, use_container_width=True, hide_index=True)
                             else:
@@ -1054,8 +1068,9 @@ elif menu == "📜 Party History & Edit":
                         if not part_df.empty:
                             st.write(f"### 🔧 Spare Parts Records ({len(part_df)})")
                             part_disp = part_df[sel_part].copy() if sel_part else part_df[['Item Details']].copy()
-                            if 'New Final Price(Rs)' in part_disp.columns:
-                                part_disp.rename(columns={'New Final Price(Rs)': 'New Final Price (Rs)'}, inplace=True)
+                            
+                            if 'Total_Price' in part_disp.columns:
+                                part_disp.rename(columns={'Total_Price': 'New Final Price (Rs)'}, inplace=True)
                                 styled_part = part_disp.style.set_properties(subset=['New Final Price (Rs)'], **{'text-align': 'center'})
                                 st.dataframe(styled_part, use_container_width=True, hide_index=True)
                             else:
@@ -1264,16 +1279,20 @@ elif menu == "🔍 Part Price Finder":
         else:
             processed_df = prepare_display_df_with_history(filtered_df)
             display_df = processed_df[['Date', 'Old Date', 'Party', 'Item Details', 'HSN Code', 'Basic Price', 'GST', 'Old Price', 'Total_Price']].copy()
-            display_df.rename(columns={'Total_Price': 'New Final Price(Rs)'}, inplace=True)
             
-            styled_disp = display_df.style.set_properties(subset=['New Final Price(Rs)'], **{'text-align': 'center'})
-            st.dataframe(styled_disp, use_container_width=True, hide_index=True)
+            if 'Total_Price' in display_df.columns:
+                display_df.rename(columns={'Total_Price': 'New Final Price (Rs)'}, inplace=True)
+                styled_disp = display_df.style.set_properties(subset=['New Final Price (Rs)'], **{'text-align': 'center'})
+                st.dataframe(styled_disp, use_container_width=True, hide_index=True)
+            else:
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
             
-            pdf_buffer = create_dynamic_pdf(search_party_name, processed_df, "Surgicraft Item / Part Price Report", ['Date', 'Party', 'Item Details', 'Old Price', 'New Final Price(Rs)'], is_machine=False)
+            pdf_buffer = create_dynamic_pdf(search_party_name, processed_df, "Surgicraft Item / Part Price Report", ['Date', 'Party', 'Item Details', 'Old Price', 'Total_Price'], is_machine=False)
             c1, c2 = st.columns(2)
             with c1: st.download_button("📥 Download PDF", data=pdf_buffer, file_name="Search_Result.pdf", mime="application/pdf", use_container_width=True, key="dl_pf_pdf")
             with c2: 
                 if st.button("👁️ View Preview", use_container_width=True, key="pv_pf_pdf"): display_pdf_in_app(pdf_buffer)
+
 
 # ==========================================
 # 6. MONTHLY EMAIL REPORTS PAGE
@@ -1327,11 +1346,11 @@ elif menu == "📧 Monthly Email Reports":
                     
                     if not machines_df.empty:
                         title_machine = f"Surgicraft Monthly Machine Party Detail ({display_month_str})"
-                        pdf_attachments[f"Machine_Sales_Report_{display_month_str}.pdf"] = create_dynamic_pdf(title_machine, machines_df, title_machine, settings.get('vis_mach', ['Date', 'Party', 'Item Details', 'Old Price', 'New Final Price(Rs)']), is_machine=True)
+                        pdf_attachments[f"Machine_Sales_Report_{display_month_str}.pdf"] = create_dynamic_pdf(title_machine, machines_df, title_machine, settings.get('vis_mach', ['Date', 'Party', 'Item Details', 'Old Price', 'Total_Price']), is_machine=True)
                         
                     if not parts_df.empty:
                         title_parts = f"Surgicraft Monthly Parts Party Detail ({display_month_str})"
-                        pdf_attachments[f"Spare_Parts_Sales_Report_{display_month_str}.pdf"] = create_dynamic_pdf(title_parts, parts_df, title_parts, settings.get('vis_part', ['Date', 'Party', 'Item Details', 'HSN Code', 'Old Price', 'New Final Price(Rs)']), is_machine=False)
+                        pdf_attachments[f"Spare_Parts_Sales_Report_{display_month_str}.pdf"] = create_dynamic_pdf(title_parts, parts_df, title_parts, settings.get('vis_part', ['Date', 'Party', 'Item Details', 'HSN Code', 'Old Price', 'Total_Price']), is_machine=False)
             
             if not pdf_attachments:
                 st.warning(f"No records found for {display_month_str}. Nothing to email.")
