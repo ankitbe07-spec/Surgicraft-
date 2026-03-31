@@ -244,7 +244,7 @@ def prepare_display_df_with_history(df):
 
     basics, gsts, hsns = [], [], []
     old_dates, old_prices = [], []
-    full_details, notes = []
+    full_details, notes = [], []  # FIXED: added second empty list
 
     for idx, row in df.iterrows():
         opts = {}
@@ -961,7 +961,6 @@ elif menu == "➕ Add New Entry":
         hsns = c3.selectbox("HSN Code:", ["-- New --"] + hsnl, key="add_sp_hsn_sel")
         hsn_v = c3.text_input("📝 New HSN:", key="add_sp_hsn_new") if hsns == "-- New --" else hsns
         
-        # --- FIXED THE SYNTAX ERROR HERE ---
         gst_r = c4.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", [])), key="add_sp_gst")
         
         final_c = basic_p + (basic_p * gst_r / 100)
