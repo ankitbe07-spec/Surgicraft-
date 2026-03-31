@@ -244,7 +244,7 @@ def prepare_display_df_with_history(df):
 
     basics, gsts, hsns = [], [], []
     old_dates, old_prices = [], []
-    full_details, notes = [], []
+    full_details, notes = [], []  
 
     for idx, row in df.iterrows():
         opts = {}
@@ -279,6 +279,7 @@ def prepare_display_df_with_history(df):
     df['GST'] = gsts
     df['Item Details'] = full_details
     df['Note'] = notes 
+    
     df['Final Price'] = df['Total_Price']
     
     return df
@@ -907,7 +908,7 @@ elif menu == "➕ Add New Entry":
             p_hist_proc = prepare_display_df_with_history(party_hist)
             disp_h = p_hist_proc[['Date', 'Item Details', 'Final Price']].reset_index(drop=True)
             disp_h.index = range(1, len(disp_h)+1)
-            styled_h = disp_h.style.set_properties(subset=['Final Price'], **{'text-align': 'center'})
+            styled_h = disp_h.style.format({'Final Price': "{:,.2f}"}).set_properties(subset=['Final Price'], **{'text-align': 'center'})
             st.dataframe(styled_h, use_container_width=True)
             
     st.write("---")
@@ -966,7 +967,7 @@ elif menu == "➕ Add New Entry":
         hsns = c3.selectbox("HSN Code:", ["-- New --"] + hsnl, key="add_sp_hsn_sel")
         hsn_v = c3.text_input("📝 New HSN:", key="add_sp_hsn_new") if hsns == "-- New --" else hsns
         
-        gst_r = c4.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", []))), key="add_sp_gst"
+        gst_r = c4.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", [])), key="add_sp_gst")
         
         final_c = basic_p + (basic_p * gst_r / 100)
         st.info(f"**Final: Rs. {final_c:,.2f}**")
@@ -1023,7 +1024,6 @@ elif menu == "📜 Party History & Edit":
                         st.toast("Saved! ✅")
                     
                     st.write("---")
-                    # --- NEW: PDF FORMAT RADIO FOR PARTY HISTORY ---
                     pdf_fmt_hist = st.radio("📄 PDF Design Format:", ["Landscape (આડું)", "Portrait (ઊભું)"], horizontal=True, key="hist_pdf_format")
                     
                     col1, col2 = st.columns(2)
@@ -1034,15 +1034,12 @@ elif menu == "📜 Party History & Edit":
                             md = m_records[sel_mach].copy() if sel_mach else pd.DataFrame()
                             md.insert(0, 'Sr. No.', range(1, len(md)+1))
                             if 'Final Price' in md.columns: 
-                                styled_m = md.style.set_properties(subset=['Final Price'], **{'text-align': 'center'})
+                                styled_m = md.style.format({'Final Price': "{:,.2f}"}).set_properties(subset=['Final Price'], **{'text-align': 'center'})
                                 st.dataframe(styled_m, use_container_width=True, hide_index=True)
                             else: 
                                 st.dataframe(md, use_container_width=True, hide_index=True)
                             
-                            # --- ADDED ORIENTATION PARAMETER ---
                             m_pdf = create_dynamic_pdf(pdf_p, m_records, "HHP Machine Price List (GST Extra) HSN 8419", sel_mach, True, orientation=pdf_fmt_hist)
-                            
-                            # --- ADDED PREVIEW BUTTON BACK ---
                             c_dl_m, c_pv_m = st.columns(2)
                             with c_dl_m:
                                 st.download_button("📥 PDF", data=m_pdf, file_name=f"{pdf_p}_Machines.pdf", use_container_width=True)
@@ -1059,15 +1056,12 @@ elif menu == "📜 Party History & Edit":
                             pd_d = p_records[sel_part].copy() if sel_part else pd.DataFrame()
                             pd_d.insert(0, 'Sr. No.', range(1, len(pd_d)+1))
                             if 'Final Price' in pd_d.columns: 
-                                styled_p = pd_d.style.set_properties(subset=['Final Price'], **{'text-align': 'center'})
+                                styled_p = pd_d.style.format({'Final Price': "{:,.2f}"}).set_properties(subset=['Final Price'], **{'text-align': 'center'})
                                 st.dataframe(styled_p, use_container_width=True, hide_index=True)
                             else: 
                                 st.dataframe(pd_d, use_container_width=True, hide_index=True)
                             
-                            # --- ADDED ORIENTATION PARAMETER ---
                             p_pdf = create_dynamic_pdf(pdf_p, p_records, "Spare Parts Price List", sel_part, False, orientation=pdf_fmt_hist)
-                            
-                            # --- ADDED PREVIEW BUTTON BACK ---
                             c_dl_p, c_pv_p = st.columns(2)
                             with c_dl_p:
                                 st.download_button("📥 PDF", data=p_pdf, file_name=f"{pdf_p}_Parts.pdf", use_container_width=True)
@@ -1262,10 +1256,9 @@ elif menu == "🔍 Part Price Finder":
             p_df = prepare_display_df_with_history(f_df)
             disp_df = p_df[['Date', 'Party', 'Item Details', 'HSN Code', 'Final Price']].reset_index(drop=True)
             disp_df.index = range(1, len(disp_df)+1)
-            styled_disp = disp_df.style.set_properties(subset=['Final Price'], **{'text-align': 'center'})
+            styled_disp = disp_df.style.format({'Final Price': "{:,.2f}"}).set_properties(subset=['Final Price'], **{'text-align': 'center'})
             st.dataframe(styled_disp, use_container_width=True)
             
-            # --- ADDED PDF FORMAT OPTION IN PART FINDER TOO ---
             st.write("---")
             pdf_fmt_find = st.radio("📄 PDF Design Format:", ["Landscape (આડું)", "Portrait (ઊભું)"], horizontal=True, key="find_pdf_format")
             
