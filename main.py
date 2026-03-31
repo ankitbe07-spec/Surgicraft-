@@ -279,7 +279,6 @@ def prepare_display_df_with_history(df):
     df['GST'] = gsts
     df['Item Details'] = full_details
     df['Note'] = notes 
-    
     df['Final Price'] = df['Total_Price']
     
     return df
@@ -357,19 +356,20 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
     end_x = width - 40
     avail_width = end_x - start_x
     
-    col_widths = {'Sr. No.': 35, 'Date': 70, 'Old Date': 70, 'HSN Code': 60, 'Old Price': 80, 'Final Price': 100}
+    # FIXED: Added 'Party': 100 to col_widths to prevent KeyError when Party column is selected
+    col_widths = {'Sr. No.': 35, 'Date': 70, 'Party': 100, 'Old Date': 70, 'HSN Code': 60, 'Old Price': 80, 'Final Price': 100}
     
     has_item_details = 'Item Details' in vis_pdf_cols
-    fixed_sum = sum([col_widths[col] for col in vis_pdf_cols if col in col_widths])
+    fixed_sum = sum([col_widths.get(col, 80) for col in vis_pdf_cols if col in col_widths])
     
     if has_item_details:
         col_widths['Item Details'] = max(100, avail_width - fixed_sum)
-        final_avail = sum([col_widths[col] for col in vis_pdf_cols])
+        final_avail = sum([col_widths.get(col, 80) for col in vis_pdf_cols])
     else:
         if fixed_sum > 0:
             scale_factor = avail_width / fixed_sum
             for col in vis_pdf_cols: 
-                col_widths[col] = col_widths[col] * scale_factor
+                col_widths[col] = col_widths.get(col, 80) * scale_factor
         final_avail = avail_width
         
     cols = [start_x]
@@ -391,7 +391,6 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
     enum_counter = 1
     
     for index, row in records_df.iterrows():
-        total_price = int(row['Total_Price']) if pd.notna(row['Total_Price']) else 0
         opts = {}
         try: 
             opts = json.loads(str(row.get('Options', '{}')))
@@ -432,12 +431,25 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
         text_y = y - 15 
         c.setFont("Helvetica-Bold", 9)
         
+        # --- FIXED PRICING FORMATS FOR PDF ---
         dt_val = str(row['Date']) if str(row['Date']) not in ["-", "nan", ""] else ""
         odt_val = str(row['Old Date']) if str(row['Old Date']) not in ["-", "nan", ""] else ""
-        old_price_str = f"{row['Old Price']:,.2f}" if str(row['Old Price']).replace('.','').isdigit() else str(row['Old Price'])
+        
+        try:
+            old_val = str(row['Old Price']).replace(',', '')
+            old_price_str = f"{float(old_val):,.2f}"
+        except:
+            old_price_str = str(row['Old Price'])
         if old_price_str == "-" or old_price_str == "nan": old_price_str = ""
+        
+        try:
+            total_price = float(row['Total_Price'])
+        except:
+            total_price = 0.0
         new_price_str = f"{total_price:,.2f}"
+        
         hsn_str = str(row.get('HSN Code', '-'))[:8]
+        party_str = str(row.get('Party', ''))[:15]
         
         max_drop = 10 
         
@@ -445,6 +457,8 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
             mid_x = (cols[i]+cols[i+1])/2.0
             if col == 'Sr. No.': 
                 c.drawCentredString(mid_x, text_y, str(enum_counter))
+            elif col == 'Party': 
+                c.drawCentredString(mid_x, text_y, party_str)
             elif col == 'Date': 
                 c.drawCentredString(mid_x, text_y, dt_val)
             elif col == 'Old Date': 
@@ -459,7 +473,11 @@ def create_dynamic_pdf(party, records_df, title_str, visible_cols, is_machine=Tr
                 c.setFont("Helvetica", 9)
                 item_str = get_item_details_str(row)
                 if not is_machine and "Basic Price" in row and "GST" in row:
-                    item_str += f" (Basic: Rs.{row['Basic Price']} | GST: {row['GST']})"
+                    try:
+                        bp = float(row['Basic Price'])
+                        item_str += f" (Basic: Rs.{bp:,.2f} | GST: {row['GST']})"
+                    except:
+                        item_str += f" (Basic: Rs.{row['Basic Price']} | GST: {row['GST']})"
                 
                 c.drawString(cols[i]+5, text_y, item_str)
                 temp_y = text_y - 15
@@ -967,7 +985,7 @@ elif menu == "➕ Add New Entry":
         hsns = c3.selectbox("HSN Code:", ["-- New --"] + hsnl, key="add_sp_hsn_sel")
         hsn_v = c3.text_input("📝 New HSN:", key="add_sp_hsn_new") if hsns == "-- New --" else hsns
         
-        gst_r = c4.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", [])), key="add_sp_gst")
+        gst_r = c4.selectbox("GST (%)", [0] + sorted(settings.get("gst_rates", []))), key="add_sp_gst"
         
         final_c = basic_p + (basic_p * gst_r / 100)
         st.info(f"**Final: Rs. {final_c:,.2f}**")
